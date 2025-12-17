@@ -123,6 +123,50 @@ The action will:
 - Commit it to `.github/pr-visual/` on the PR branch
 - Post a comment with the embedded image
 
+### Advanced: Agentic Mode with Gemini CLI
+
+For complex PRs where raw diffs lack context, chain with [Gemini CLI](https://github.com/google-github-actions/run-gemini-cli) to let AI explore your codebase first:
+
+```yaml
+name: PR Visual (Agentic)
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  visualize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Step 1: Let Gemini CLI explore and understand the PR
+      - name: Understand PR
+        id: understand
+        uses: google-github-actions/run-gemini-cli@v1
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            Explore this PR. Read files as needed to understand what it does.
+            Then write a concise creative brief for an infographic.
+            Scale complexity to the change - small fixes need simple visuals.
+            Output ONLY the brief.
+
+      # Step 2: Generate visual from the brief
+      - uses: gitethanwoo/pr-visual@v1
+        with:
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: ${{ steps.understand.outputs.summary }}
+```
+
+This approach produces better visuals because Gemini can read the actual code, not just the diff.
+
 ## CLI Reference
 
 ```

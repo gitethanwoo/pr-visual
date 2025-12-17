@@ -252,6 +252,7 @@ async function main() {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     const hostedApiKey = process.env.HOSTED_API_KEY;
+    const customPrompt = process.env.INPUT_PROMPT;
     const style = process.env.INPUT_STYLE || "clean";
     const shouldComment = process.env.INPUT_COMMENT !== "false";
     const githubToken = process.env.GITHUB_TOKEN;
@@ -278,22 +279,31 @@ async function main() {
 
     const octokit = github.getOctokit(githubToken);
 
-    console.log("Getting branch diff...");
-    const diff = await getBranchDiff();
+    let imagePrompt;
 
-    if (!diff.trim()) {
-      console.log("No changes found in this PR.");
-      core.setOutput("image-path", "");
-      core.setOutput("image-url", "");
-      return;
+    if (customPrompt) {
+      // Use provided prompt directly (e.g., from gemini-cli)
+      console.log("Using custom prompt (skipping diff analysis)...");
+      imagePrompt = customPrompt;
+    } else {
+      // Default: analyze diff with Flash
+      console.log("Getting branch diff...");
+      const diff = await getBranchDiff();
+
+      if (!diff.trim()) {
+        console.log("No changes found in this PR.");
+        core.setOutput("image-path", "");
+        core.setOutput("image-url", "");
+        return;
+      }
+
+      console.log(`Found ${diff.split("\n").length} lines of diff`);
+
+      console.log(`Analyzing diff with Gemini Flash (${style} style)...`);
+      imagePrompt = await analyzeDiff(diff, style, apiKey || hostedApiKey);
     }
 
-    console.log(`Found ${diff.split("\n").length} lines of diff`);
-
-    console.log(`Analyzing diff with Gemini Flash (${style} style)...`);
-    const imagePrompt = await analyzeDiff(diff, style, apiKey || hostedApiKey);
-
-    console.log("Generated image prompt:");
+    console.log("Image prompt:");
     console.log(imagePrompt.slice(0, 500) + "...");
 
     console.log("Generating image with Gemini Pro...");
