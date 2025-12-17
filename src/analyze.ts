@@ -1,32 +1,48 @@
 import { GoogleGenAI } from "@google/genai";
 
 const ANALYSIS_MODEL = "gemini-3-flash-preview";
+const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
-export async function analyzeDiff(diff: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY environment variable is required");
+interface GeminiResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ text?: string }>;
+    };
+  }>;
+  error?: {
+    message: string;
+  };
+}
+
+async function generateWithOAuth(prompt: string, accessToken: string): Promise<string> {
+  const response = await fetch(`${API_BASE}/models/${ANALYSIS_MODEL}:generateContent`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+    }),
+  });
+
+  const data: GeminiResponse = await response.json();
+
+  if (data.error) {
+    throw new Error(data.error.message);
   }
 
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error("No response from Gemini");
+  }
+
+  return text.trim();
+}
+
+async function generateWithApiKey(prompt: string): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY!;
   const ai = new GoogleGenAI({ apiKey });
-
-  const prompt = `You are an expert at creating visual representations of code changes.
-
-Analyze this git diff and create a detailed image prompt for an infographic that visually explains what changed.
-
-The image should:
-- Be a clean, professional infographic style
-- Show the key concepts/components that were added, modified, or removed
-- Use visual metaphors to represent the code changes (e.g., boxes for components, arrows for data flow)
-- Include a title that summarizes the change
-- Use a modern, tech-focused color scheme
-
-Git diff:
-\`\`\`
-${diff.slice(0, 15000)}
-\`\`\`
-
-Respond with ONLY the image prompt, no explanations. The prompt should be detailed enough for an image generation model to create a meaningful infographic. Keep it under 500 words.`;
 
   const response = await ai.models.generateContent({
     model: ANALYSIS_MODEL,
@@ -35,8 +51,54 @@ Respond with ONLY the image prompt, no explanations. The prompt should be detail
 
   const text = response.text;
   if (!text) {
-    throw new Error("No response from Gemini Flash");
+    throw new Error("No response from Gemini");
   }
 
   return text.trim();
+}
+
+export async function analyzeDiff(diff: string, accessToken?: string): Promise<string> {
+  const prompt = `You are an expert technical writer creating visual explainers for code changes. Your output will be passed to an image generation model to create an infographic.
+
+Analyze this git diff and create a detailed, structured visual explainer. Think like you're designing an infographic that tells the story of this change.
+
+Your output should include these sections (adapt based on what's relevant):
+
+1. **Title & Problem Statement** - What problem does this change solve? One compelling headline.
+
+2. **Before → After Flow** - Show the user journey or system state change. Use ASCII-style diagrams:
+   \`\`\`
+   ┌─────────────┐     ┌─────────────┐
+   │   Before    │ ──→ │   After     │
+   └─────────────┘     └─────────────┘
+   \`\`\`
+
+3. **Data Flow / Architecture Diagram** - How do components interact? Show the flow with boxes and arrows.
+
+4. **Key Components Changed** - List files/modules with bullet points showing what each contributes.
+
+5. **Why This Matters** - 2-3 bullet points on the impact or questions this enables.
+
+Use these visual conventions:
+- Boxes for components: ┌───┐ └───┘
+- Arrows for flow: ──→ ──▶
+- Checkmarks/X for before-after: ✅ ❌
+- Icons for concepts: 📊 🔄 ⚡ 🔒
+
+Git diff:
+\`\`\`
+${diff.slice(0, 15000)}
+\`\`\`
+
+Create a comprehensive visual explainer that an image generation model can turn into a polished infographic. Be specific about layout, sections, and visual hierarchy. Output the full explainer - do not truncate.`;
+
+  if (accessToken) {
+    return generateWithOAuth(prompt, accessToken);
+  }
+
+  if (process.env.GEMINI_API_KEY) {
+    return generateWithApiKey(prompt);
+  }
+
+  throw new Error("No authentication available");
 }

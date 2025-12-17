@@ -24,7 +24,7 @@ async function selectCommit() {
     ]);
     return commit;
 }
-export async function getDiff(mode) {
+export async function getDiff(mode, commitHashArg) {
     switch (mode) {
         case "branch": {
             const defaultBranch = await getDefaultBranch();
@@ -32,17 +32,17 @@ export async function getDiff(mode) {
             if (currentBranch === defaultBranch) {
                 throw new Error(`Already on ${defaultBranch}. Switch to a feature branch first.`);
             }
-            return git.diff([`${defaultBranch}...${currentBranch}`]);
+            return (await git.diff([`${defaultBranch}...${currentBranch}`])) ?? "";
         }
         case "commit": {
-            const commitHash = await selectCommit();
-            return git.diff([`${commitHash}^`, commitHash]);
+            const commitHash = commitHashArg ?? (await selectCommit());
+            return (await git.diff([`${commitHash}^`, commitHash])) ?? "";
         }
         case "staged": {
-            return git.diff(["--cached"]);
+            return (await git.diff(["--cached"])) ?? "";
         }
         case "unstaged": {
-            return git.diff();
+            return (await git.diff()) ?? "";
         }
     }
 }
