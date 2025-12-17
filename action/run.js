@@ -137,7 +137,11 @@ Analyze this diff. If you need to read any files to understand what the code doe
 
     const candidate = response.candidates?.[0];
     if (!candidate?.content?.parts) {
-      throw new Error("No response from model");
+      // Log full response for debugging
+      console.error("Empty response from model:");
+      console.error("  candidates:", JSON.stringify(response.candidates, null, 2));
+      console.error("  promptFeedback:", JSON.stringify(response.promptFeedback, null, 2));
+      throw new Error("No response from model - check logs for details");
     }
 
     // Add assistant response to messages
