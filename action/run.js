@@ -1,77 +1,25 @@
 import * as core from "@actions/core";
-import * as exec from "@actions/exec";
 import * as github from "@actions/github";
 import { GoogleGenAI } from "@google/genai";
 import { simpleGit } from "simple-git";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execSync } from "node:child_process";
 
-const ANALYSIS_MODEL = "gemini-3-flash-preview";
 const IMAGE_MODEL = "gemini-3-pro-image-preview";
 
 const STYLE_INSTRUCTIONS = {
-  clean: `
-## Visual Style: CLEAN / CORPORATE
-- Professional PowerPoint/Keynote aesthetic
-- Polished boxes with subtle shadows and rounded corners
-- Color palette: Blues, grays, and one accent color (teal or orange)
-- Clean sans-serif fonts (like Inter, Helvetica)
-- Structured grid layout with clear visual hierarchy
-- Subtle gradients, no harsh colors
-- Icons should be simple line icons (Lucide/Feather style)`,
-
-  excalidraw: `
-## Visual Style: EXCALIDRAW / HAND-DRAWN
-- Sketchy, hand-drawn whiteboard aesthetic
-- Rough, imperfect lines and shapes (like drawn with a marker)
-- Color palette: Black lines on white/cream background, with pastel highlights
-- Hand-written style fonts (or clean fonts that feel casual)
-- Arrows should look hand-drawn with slightly wobbly lines
-- Boxes should have rough edges, not perfect rectangles
-- Feel like someone quickly sketched this on a whiteboard`,
-
-  minimal: `
-## Visual Style: MINIMAL / ICON-HEAVY
-- Extreme simplicity with lots of whitespace
-- Large, bold icons as the primary visual elements
-- Color palette: Monochrome (black, white, one accent color)
-- Very limited text - let icons tell the story
-- Clean geometric shapes
-- Typography: Bold headers, minimal body text`,
-
-  tech: `
-## Visual Style: TECH / DARK MODE
-- Dark background (#0d1117 or similar GitHub dark)
-- Neon accent colors: Cyan (#00d4ff), Magenta (#ff00ff), Green (#00ff00)
-- Terminal/code aesthetic with monospace fonts
-- Glowing effects on key elements
-- Matrix/cyberpunk vibes
-- Code snippets should look like they're in a terminal`,
-
-  playful: `
-## Visual Style: PLAYFUL / COLORFUL
-- Bright, cheerful colors (not neon, but saturated and fun)
-- Rounded, friendly shapes
-- Cartoon-style illustrations or characters if appropriate
-- Color palette: Rainbow but harmonious (think Notion or Linear)
-- Playful icons with personality
-- Casual, friendly tone in any text`,
+  clean: `Use a CLEAN / CORPORATE style: Professional PowerPoint aesthetic, polished boxes with shadows, blues/grays/teal palette, clean sans-serif fonts, structured grid layout.`,
+  excalidraw: `Use an EXCALIDRAW / HAND-DRAWN style: Sketchy whiteboard aesthetic, rough imperfect lines, black on cream with pastel highlights, hand-written feel.`,
+  minimal: `Use a MINIMAL / ICON-HEAVY style: Extreme simplicity, lots of whitespace, large bold icons, monochrome with one accent color, very limited text.`,
+  tech: `Use a TECH / DARK MODE style: Dark background (#0d1117), neon accents (cyan/magenta/green), terminal aesthetic, monospace fonts, glowing effects.`,
+  playful: `Use a PLAYFUL / COLORFUL style: Bright cheerful colors, rounded friendly shapes, cartoon illustrations, rainbow but harmonious palette.`,
 };
 
 async function getBranchDiff() {
   const git = simpleGit();
-
-  // Fetch to ensure we have remote refs
   await git.fetch(["origin"]);
 
-  // Get the default branch
-  const remotes = await git.getRemotes(true);
-  const origin = remotes.find((r) => r.name === "origin");
-  if (!origin) {
-    throw new Error("No origin remote found");
-  }
-
-  // Try main, then master
   let baseBranch = "origin/main";
   try {
     await git.revparse(["--verify", baseBranch]);
@@ -79,62 +27,62 @@ async function getBranchDiff() {
     baseBranch = "origin/master";
   }
 
-  // Get the diff
   const diff = await git.diff([baseBranch, "HEAD"]);
   return diff;
 }
 
-async function analyzeDiff(diff, style, apiKey) {
-  const styleInstructions = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.clean;
+async function analyzeWithGeminiCli(diff, style) {
+  const styleInstruction = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.clean;
 
-  const prompt = `You are an expert technical writer creating visual explainers for code changes. Your output will be passed to an image generation model to create an infographic.
+  const prompt = `You are a creative director preparing a visual brief for an infographic about code changes.
 
-Analyze this git diff and create a detailed, structured visual explainer. Think like you're designing an infographic that tells the story of this change.
+Your job:
+1. Understand what this PR/diff actually does
+2. If you need more context, read any relevant files in the codebase
+3. Once you understand, write a concise creative brief for an infographic
 
-Your output should include these sections (adapt based on what's relevant):
+Guidelines:
+- Scale complexity to the change. Small fixes = simple visuals. Big features = more detail.
+- Focus on the ONE key insight or change, not every line
+- Prefer clarity over comprehensiveness
+- A single compelling diagram beats 5 dense sections
 
-1. **Title & Problem Statement** - What problem does this change solve? One compelling headline.
+Here's the git diff:
 
-2. **Before → After Flow** - Show the user journey or system state change. Use ASCII-style diagrams:
-   \`\`\`
-   ┌─────────────┐     ┌─────────────┐
-   │   Before    │ ──→ │   After     │
-   └─────────────┘     └─────────────┘
-   \`\`\`
-
-3. **Data Flow / Architecture Diagram** - How do components interact? Show the flow with boxes and arrows.
-
-4. **Key Components Changed** - List files/modules with bullet points showing what each contributes.
-
-5. **Why This Matters** - 2-3 bullet points on the impact.
-
-Use these visual conventions:
-- Boxes for components: ┌───┐ └───┘
-- Arrows for flow: ──→ ──▶
-- Checkmarks/X for before-after: ✅ ❌
-- Icons for concepts: 📊 🔄 ⚡ 🔒
-
-${styleInstructions}
-
-Git diff:
-\`\`\`
+\`\`\`diff
 ${diff.slice(0, 15000)}
 \`\`\`
 
-Create a comprehensive visual explainer that an image generation model can turn into a polished infographic. Be specific about layout, sections, and visual hierarchy. The STYLE INSTRUCTIONS above are CRITICAL - make sure to emphasize these in your visual design notes. Output the full explainer - do not truncate.`;
+Analyze this diff. Read any files you need to understand the context. Then output ONLY a creative brief for generating an infographic image. No preamble, just the brief.`;
 
-  const ai = new GoogleGenAI({ apiKey });
-  const response = await ai.models.generateContent({
-    model: ANALYSIS_MODEL,
-    contents: prompt,
-  });
+  // Write prompt to temp file to avoid shell escaping issues
+  const tempFile = path.join(process.cwd(), ".pr-visual-prompt.tmp");
+  fs.writeFileSync(tempFile, prompt);
 
-  const text = response.text;
-  if (!text) {
-    throw new Error("No response from Gemini analysis model");
+  try {
+    console.log("Running Gemini CLI for agentic analysis...");
+
+    // Run gemini CLI in headless mode with auto-approve for file reads
+    const output = execSync(
+      `cat "${tempFile}" | gemini -y -m gemini-3-flash-preview`,
+      {
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+        timeout: 120000, // 2 minute timeout
+        env: {
+          ...process.env,
+          // GEMINI_API_KEY should already be set
+        },
+      }
+    );
+
+    return output.trim();
+  } finally {
+    // Clean up temp file
+    if (fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile);
+    }
   }
-
-  return text.trim();
 }
 
 async function generateImage(prompt, apiKey) {
@@ -162,65 +110,166 @@ async function generateImage(prompt, apiKey) {
   throw new Error("No image data in response");
 }
 
-async function commitImageToPR(octokit, imageBuffer, context) {
+async function commitImageToPR(octokit, imageBuffer, context, prompt) {
   const { owner, repo } = context.repo;
   const prNumber = context.payload.pull_request.number;
   const headRef = context.payload.pull_request.head.ref;
+  const commitSha = context.payload.pull_request.head.sha.slice(0, 7);
 
-  const imagePath = `.github/pr-visual/pr-${prNumber}.png`;
+  // Use commit SHA in filename so each push gets its own image
+  const imagePath = `.github/pr-visual/pr-${prNumber}-${commitSha}.png`;
+  const promptPath = `.github/pr-visual/pr-${prNumber}-${commitSha}.txt`;
   const imageContent = imageBuffer.toString("base64");
+  const promptContent = Buffer.from(prompt).toString("base64");
 
-  // Check if file already exists
-  let existingSha;
-  try {
-    const { data: existingFile } = await octokit.rest.repos.getContent({
-      owner,
-      repo,
-      path: imagePath,
-      ref: headRef,
-    });
-    existingSha = existingFile.sha;
-  } catch (e) {
-    // File doesn't exist yet, that's fine
-  }
-
-  // Create or update the file
+  // Commit both image and prompt file
   await octokit.rest.repos.createOrUpdateFileContents({
     owner,
     repo,
     path: imagePath,
-    message: `Update PR visual for #${prNumber}`,
+    message: `Add PR visual for #${prNumber} (${commitSha})`,
     content: imageContent,
     branch: headRef,
-    ...(existingSha && { sha: existingSha }),
   });
 
-  // Return the raw URL
+  await octokit.rest.repos.createOrUpdateFileContents({
+    owner,
+    repo,
+    path: promptPath,
+    message: `Add PR visual prompt for #${prNumber} (${commitSha})`,
+    content: promptContent,
+    branch: headRef,
+  });
+
   const imageUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/${imagePath}`;
-  return { imagePath, imageUrl };
+  return { imagePath, imageUrl, commitSha };
 }
 
-async function postOrUpdateComment(octokit, context, imageUrl, style) {
+async function getExistingImages(octokit, context) {
+  const { owner, repo } = context.repo;
+  const prNumber = context.payload.pull_request.number;
+  const headRef = context.payload.pull_request.head.ref;
+
+  try {
+    const { data: contents } = await octokit.rest.repos.getContent({
+      owner,
+      repo,
+      path: ".github/pr-visual",
+      ref: headRef,
+    });
+
+    if (!Array.isArray(contents)) return [];
+
+    // Filter to images for this PR, extract commit SHA from filename
+    const prImages = contents
+      .filter((f) => f.name.startsWith(`pr-${prNumber}-`) && f.name.endsWith(".png"))
+      .map((f) => {
+        const match = f.name.match(/pr-\d+-([a-f0-9]+)\.png/);
+        const sha = match ? match[1] : null;
+        return {
+          name: f.name,
+          sha,
+          url: `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/.github/pr-visual/${f.name}`,
+          promptUrl: `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/.github/pr-visual/pr-${prNumber}-${sha}.txt`,
+        };
+      });
+
+    // Fetch prompts for each image
+    for (const img of prImages) {
+      try {
+        const { data: promptFile } = await octokit.rest.repos.getContent({
+          owner,
+          repo,
+          path: `.github/pr-visual/pr-${prNumber}-${img.sha}.txt`,
+          ref: headRef,
+        });
+        if (promptFile.content) {
+          img.prompt = Buffer.from(promptFile.content, "base64").toString("utf-8");
+        }
+      } catch (e) {
+        // Prompt file doesn't exist for older images
+        img.prompt = null;
+      }
+    }
+
+    return prImages;
+  } catch (e) {
+    // Directory doesn't exist yet
+    return [];
+  }
+}
+
+async function postOrUpdateComment(octokit, context, imageUrl, style, currentSha, currentPrompt) {
   const { owner, repo } = context.repo;
   const prNumber = context.payload.pull_request.number;
 
+  // Get all existing images for this PR
+  const existingImages = await getExistingImages(octokit, context);
+
+  // Filter out the current image for the history section
+  const olderImages = existingImages.filter((img) => img.sha !== currentSha);
+
   const commentMarker = "<!-- pr-visual-comment -->";
+
+  // Format prompt for display (truncate if very long)
+  const formatPrompt = (prompt) => {
+    if (!prompt) return "_No prompt saved_";
+    const maxLen = 2000;
+    return prompt.length > maxLen ? prompt.slice(0, maxLen) + "..." : prompt;
+  };
+
+  let historySection = "";
+  if (olderImages.length > 0) {
+    const imageList = olderImages
+      .map((img) => {
+        const promptSection = `<details>
+<summary>View prompt</summary>
+
+\`\`\`
+${formatPrompt(img.prompt)}
+\`\`\`
+
+</details>`;
+        return `### \`${img.sha}\`\n![${img.sha}](${img.url}?t=${Date.now()})\n${promptSection}`;
+      })
+      .join("\n\n");
+    historySection = `
+<details>
+<summary>Previous versions (${olderImages.length})</summary>
+
+${imageList}
+
+</details>
+`;
+  }
+
   const commentBody = `${commentMarker}
 ## PR Visual
+
+**Latest** (\`${currentSha}\`):
 
 ![PR Infographic](${imageUrl}?t=${Date.now()})
 
 <details>
-<summary>Generated with pr-visual</summary>
+<summary>View prompt</summary>
 
-**Style:** ${style}
+\`\`\`
+${formatPrompt(currentPrompt)}
+\`\`\`
 
-[View full size](${imageUrl})
+</details>
+
+${historySection}
+<details>
+<summary>About</summary>
+
+**Style:** ${style} | [View full size](${imageUrl})
+
+Generated with [pr-visual](https://github.com/gitethanwoo/pr-visual)
 
 </details>
 `;
 
-  // Look for existing comment
   const { data: comments } = await octokit.rest.issues.listComments({
     owner,
     repo,
@@ -252,15 +301,13 @@ async function main() {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     const hostedApiKey = process.env.HOSTED_API_KEY;
+    const customPrompt = process.env.INPUT_PROMPT;
     const style = process.env.INPUT_STYLE || "clean";
     const shouldComment = process.env.INPUT_COMMENT !== "false";
     const githubToken = process.env.GITHUB_TOKEN;
 
-    // Validate auth
     if (!apiKey && !hostedApiKey) {
-      core.setFailed(
-        "No authentication provided. Set gemini-api-key or hosted-api-key input."
-      );
+      core.setFailed("No authentication provided. Set gemini-api-key input.");
       return;
     }
 
@@ -277,40 +324,45 @@ async function main() {
     }
 
     const octokit = github.getOctokit(githubToken);
+    let imagePrompt;
 
-    console.log("Getting branch diff...");
-    const diff = await getBranchDiff();
+    if (customPrompt) {
+      console.log("Using custom prompt...");
+      imagePrompt = customPrompt;
+    } else {
+      console.log("Getting branch diff...");
+      const diff = await getBranchDiff();
 
-    if (!diff.trim()) {
-      console.log("No changes found in this PR.");
-      core.setOutput("image-path", "");
-      core.setOutput("image-url", "");
-      return;
+      if (!diff.trim()) {
+        console.log("No changes found in this PR.");
+        core.setOutput("image-path", "");
+        core.setOutput("image-url", "");
+        return;
+      }
+
+      console.log(`Found ${diff.split("\n").length} lines of diff`);
+
+      imagePrompt = await analyzeWithGeminiCli(diff, style);
     }
 
-    console.log(`Found ${diff.split("\n").length} lines of diff`);
+    console.log("\nCreative brief:");
+    console.log(imagePrompt.slice(0, 800) + (imagePrompt.length > 800 ? "..." : ""));
 
-    console.log(`Analyzing diff with Gemini Flash (${style} style)...`);
-    const imagePrompt = await analyzeDiff(diff, style, apiKey || hostedApiKey);
+    // Append style instruction to ensure it's applied
+    const styleInstruction = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.clean;
+    const finalPrompt = `${imagePrompt}\n\nIMPORTANT STYLE OVERRIDE: ${styleInstruction}`;
 
-    console.log("Generated image prompt:");
-    console.log(imagePrompt.slice(0, 500) + "...");
-
-    console.log("Generating image with Gemini Pro...");
-    const imageBuffer = await generateImage(imagePrompt, apiKey || hostedApiKey);
+    console.log("\nGenerating image...");
+    const imageBuffer = await generateImage(finalPrompt, apiKey || hostedApiKey);
 
     console.log("Committing image to PR branch...");
-    const { imagePath, imageUrl } = await commitImageToPR(
-      octokit,
-      imageBuffer,
-      context
-    );
+    const { imagePath, imageUrl, commitSha } = await commitImageToPR(octokit, imageBuffer, context, finalPrompt);
 
     console.log(`Image committed to: ${imagePath}`);
 
     if (shouldComment) {
       console.log("Posting comment...");
-      await postOrUpdateComment(octokit, context, imageUrl, style);
+      await postOrUpdateComment(octokit, context, imageUrl, style, commitSha, finalPrompt);
     }
 
     core.setOutput("image-path", imagePath);

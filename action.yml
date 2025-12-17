@@ -13,6 +13,9 @@ inputs:
   hosted-api-key:
     description: 'API key for hosted pr-visual service (future)'
     required: false
+  prompt:
+    description: 'Custom prompt for image generation (bypasses diff analysis)'
+    required: false
   style:
     description: 'Visual style: clean, excalidraw, minimal, tech, playful'
     required: false
@@ -49,6 +52,10 @@ runs:
         cd action
         npm ci
 
+    - name: Install Gemini CLI
+      shell: bash
+      run: npm install -g @google/gemini-cli
+
     - name: Generate PR Visual
       id: generate
       shell: bash
@@ -56,6 +63,7 @@ runs:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
         HOSTED_API_KEY: ${{ inputs.hosted-api-key }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_PROMPT: ${{ inputs.prompt }}
         INPUT_STYLE: ${{ inputs.style }}
         INPUT_COMMENT: ${{ inputs.comment }}
         ACTION_PATH: ${{ github.action_path }}
