@@ -6,13 +6,15 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -30,11 +32,21 @@ jobs:
           PUBLISHED=$(npm view pr-visual version 2>/dev/null || echo "0.0.0")
           if [ "$CURRENT" != "$PUBLISHED" ]; then
             echo "publish=true" >> $GITHUB_OUTPUT
-            echo "Version $CURRENT not published yet (npm has $PUBLISHED)"
+            echo "bump=false" >> $GITHUB_OUTPUT
+            echo "Version $CURRENT not published yet"
           else
-            echo "publish=false" >> $GITHUB_OUTPUT
-            echo "Version $CURRENT already published, skipping"
+            echo "publish=true" >> $GITHUB_OUTPUT
+            echo "bump=true" >> $GITHUB_OUTPUT
+            echo "Version $CURRENT already published, will bump"
           fi
+
+      - name: Bump version
+        if: steps.check.outputs.bump == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          npm version patch -m "Bump version to %s [skip ci]"
+          git push
 
       - name: Publish to npm
         if: steps.check.outputs.publish == 'true'
