@@ -4,6 +4,8 @@ name: PR Visual
 on:
   pull_request:
     types: [opened, synchronize]
+    paths-ignore:
+      - '.github/pr-visual/**'
 
 jobs:
   visualize:

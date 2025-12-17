@@ -99,6 +99,8 @@ name: PR Visual
 on:
   pull_request:
     types: [opened, synchronize]
+    paths-ignore:
+      - '.github/pr-visual/**'  # Prevent infinite loop
 
 jobs:
   visualize:
@@ -133,6 +135,8 @@ name: PR Visual (Agentic)
 on:
   pull_request:
     types: [opened, synchronize]
+    paths-ignore:
+      - '.github/pr-visual/**'  # Prevent infinite loop
 
 jobs:
   visualize:
