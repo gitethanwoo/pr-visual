@@ -1,5 +1,4 @@
 import * as core from "@actions/core";
-import * as exec from "@actions/exec";
 import * as github from "@actions/github";
 import { GoogleGenAI } from "@google/genai";
 import { simpleGit } from "simple-git";
@@ -10,68 +9,78 @@ const ANALYSIS_MODEL = "gemini-3-flash-preview";
 const IMAGE_MODEL = "gemini-3-pro-image-preview";
 
 const STYLE_INSTRUCTIONS = {
-  clean: `
-## Visual Style: CLEAN / CORPORATE
-- Professional PowerPoint/Keynote aesthetic
-- Polished boxes with subtle shadows and rounded corners
-- Color palette: Blues, grays, and one accent color (teal or orange)
-- Clean sans-serif fonts (like Inter, Helvetica)
-- Structured grid layout with clear visual hierarchy
-- Subtle gradients, no harsh colors
-- Icons should be simple line icons (Lucide/Feather style)`,
-
-  excalidraw: `
-## Visual Style: EXCALIDRAW / HAND-DRAWN
-- Sketchy, hand-drawn whiteboard aesthetic
-- Rough, imperfect lines and shapes (like drawn with a marker)
-- Color palette: Black lines on white/cream background, with pastel highlights
-- Hand-written style fonts (or clean fonts that feel casual)
-- Arrows should look hand-drawn with slightly wobbly lines
-- Boxes should have rough edges, not perfect rectangles
-- Feel like someone quickly sketched this on a whiteboard`,
-
-  minimal: `
-## Visual Style: MINIMAL / ICON-HEAVY
-- Extreme simplicity with lots of whitespace
-- Large, bold icons as the primary visual elements
-- Color palette: Monochrome (black, white, one accent color)
-- Very limited text - let icons tell the story
-- Clean geometric shapes
-- Typography: Bold headers, minimal body text`,
-
-  tech: `
-## Visual Style: TECH / DARK MODE
-- Dark background (#0d1117 or similar GitHub dark)
-- Neon accent colors: Cyan (#00d4ff), Magenta (#ff00ff), Green (#00ff00)
-- Terminal/code aesthetic with monospace fonts
-- Glowing effects on key elements
-- Matrix/cyberpunk vibes
-- Code snippets should look like they're in a terminal`,
-
-  playful: `
-## Visual Style: PLAYFUL / COLORFUL
-- Bright, cheerful colors (not neon, but saturated and fun)
-- Rounded, friendly shapes
-- Cartoon-style illustrations or characters if appropriate
-- Color palette: Rainbow but harmonious (think Notion or Linear)
-- Playful icons with personality
-- Casual, friendly tone in any text`,
+  clean: `Use a CLEAN / CORPORATE style: Professional PowerPoint aesthetic, polished boxes with shadows, blues/grays/teal palette, clean sans-serif fonts, structured grid layout.`,
+  excalidraw: `Use an EXCALIDRAW / HAND-DRAWN style: Sketchy whiteboard aesthetic, rough imperfect lines, black on cream with pastel highlights, hand-written feel.`,
+  minimal: `Use a MINIMAL / ICON-HEAVY style: Extreme simplicity, lots of whitespace, large bold icons, monochrome with one accent color, very limited text.`,
+  tech: `Use a TECH / DARK MODE style: Dark background (#0d1117), neon accents (cyan/magenta/green), terminal aesthetic, monospace fonts, glowing effects.`,
+  playful: `Use a PLAYFUL / COLORFUL style: Bright cheerful colors, rounded friendly shapes, cartoon illustrations, rainbow but harmonious palette.`,
 };
+
+// Tool definitions for agentic file reading
+const tools = [
+  {
+    name: "readFile",
+    description: "Read the contents of a file from the repository to understand the code better. Use this when you need more context about what a changed file does or how it fits into the codebase.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "The file path relative to the repository root (e.g., 'src/utils.ts' or 'package.json')"
+        }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "listFiles",
+    description: "List files in a directory to understand the project structure.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "The directory path relative to the repository root (e.g., 'src' or '.')"
+        }
+      },
+      required: ["path"]
+    }
+  }
+];
+
+function executeToolCall(toolName, args) {
+  try {
+    if (toolName === "readFile") {
+      const filePath = path.resolve(process.cwd(), args.path);
+      if (!fs.existsSync(filePath)) {
+        return `File not found: ${args.path}`;
+      }
+      const content = fs.readFileSync(filePath, "utf-8");
+      // Limit file size to avoid token explosion
+      if (content.length > 10000) {
+        return content.slice(0, 10000) + "\n... (truncated)";
+      }
+      return content;
+    } else if (toolName === "listFiles") {
+      const dirPath = path.resolve(process.cwd(), args.path || ".");
+      if (!fs.existsSync(dirPath)) {
+        return `Directory not found: ${args.path}`;
+      }
+      const files = fs.readdirSync(dirPath, { withFileTypes: true });
+      return files
+        .map((f) => (f.isDirectory() ? `${f.name}/` : f.name))
+        .join("\n");
+    }
+    return `Unknown tool: ${toolName}`;
+  } catch (error) {
+    return `Error: ${error.message}`;
+  }
+}
 
 async function getBranchDiff() {
   const git = simpleGit();
-
-  // Fetch to ensure we have remote refs
   await git.fetch(["origin"]);
 
-  // Get the default branch
-  const remotes = await git.getRemotes(true);
-  const origin = remotes.find((r) => r.name === "origin");
-  if (!origin) {
-    throw new Error("No origin remote found");
-  }
-
-  // Try main, then master
   let baseBranch = "origin/main";
   try {
     await git.revparse(["--verify", baseBranch]);
@@ -79,62 +88,97 @@ async function getBranchDiff() {
     baseBranch = "origin/master";
   }
 
-  // Get the diff
   const diff = await git.diff([baseBranch, "HEAD"]);
   return diff;
 }
 
-async function analyzeDiff(diff, style, apiKey) {
-  const styleInstructions = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.clean;
+async function agenticAnalysis(diff, style, apiKey) {
+  const ai = new GoogleGenAI({ apiKey });
+  const styleInstruction = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.clean;
 
-  const prompt = `You are an expert technical writer creating visual explainers for code changes. Your output will be passed to an image generation model to create an infographic.
+  const systemPrompt = `You are a creative director preparing a visual brief for an infographic about code changes.
 
-Analyze this git diff and create a detailed, structured visual explainer. Think like you're designing an infographic that tells the story of this change.
+Your job:
+1. Understand what this PR/diff actually does
+2. If the diff alone doesn't give you enough context, use the tools to read files
+3. Once you understand, write a concise creative brief for an infographic
 
-Your output should include these sections (adapt based on what's relevant):
+Guidelines:
+- Scale complexity to the change. Small fixes = simple visuals. Big features = more detail.
+- Focus on the ONE key insight or change, not every line
+- Prefer clarity over comprehensiveness
+- A single compelling diagram beats 5 dense sections
+- ${styleInstruction}
 
-1. **Title & Problem Statement** - What problem does this change solve? One compelling headline.
+When you fully understand the changes and are ready, output your creative brief starting with "BRIEF:" on its own line.`;
 
-2. **Before → After Flow** - Show the user journey or system state change. Use ASCII-style diagrams:
-   \`\`\`
-   ┌─────────────┐     ┌─────────────┐
-   │   Before    │ ──→ │   After     │
-   └─────────────┘     └─────────────┘
-   \`\`\`
+  const userPrompt = `Here's the git diff for this PR:
 
-3. **Data Flow / Architecture Diagram** - How do components interact? Show the flow with boxes and arrows.
-
-4. **Key Components Changed** - List files/modules with bullet points showing what each contributes.
-
-5. **Why This Matters** - 2-3 bullet points on the impact.
-
-Use these visual conventions:
-- Boxes for components: ┌───┐ └───┘
-- Arrows for flow: ──→ ──▶
-- Checkmarks/X for before-after: ✅ ❌
-- Icons for concepts: 📊 🔄 ⚡ 🔒
-
-${styleInstructions}
-
-Git diff:
-\`\`\`
+\`\`\`diff
 ${diff.slice(0, 15000)}
 \`\`\`
 
-Create a comprehensive visual explainer that an image generation model can turn into a polished infographic. Be specific about layout, sections, and visual hierarchy. The STYLE INSTRUCTIONS above are CRITICAL - make sure to emphasize these in your visual design notes. Output the full explainer - do not truncate.`;
+Analyze this diff. If you need to read any files to understand what the code does or how it fits into the project, use the readFile or listFiles tools. Once you understand the changes, write a creative brief for an infographic.`;
 
-  const ai = new GoogleGenAI({ apiKey });
-  const response = await ai.models.generateContent({
-    model: ANALYSIS_MODEL,
-    contents: prompt,
-  });
+  let messages = [{ role: "user", parts: [{ text: userPrompt }] }];
+  let iterations = 0;
+  const maxIterations = 5;
 
-  const text = response.text;
-  if (!text) {
-    throw new Error("No response from Gemini analysis model");
+  while (iterations < maxIterations) {
+    iterations++;
+    console.log(`Agentic iteration ${iterations}...`);
+
+    const response = await ai.models.generateContent({
+      model: ANALYSIS_MODEL,
+      systemInstruction: systemPrompt,
+      contents: messages,
+      tools: [{ functionDeclarations: tools }],
+    });
+
+    const candidate = response.candidates?.[0];
+    if (!candidate?.content?.parts) {
+      throw new Error("No response from model");
+    }
+
+    // Add assistant response to messages
+    messages.push({ role: "model", parts: candidate.content.parts });
+
+    // Check for function calls
+    const functionCalls = candidate.content.parts.filter((p) => p.functionCall);
+
+    if (functionCalls.length > 0) {
+      // Execute tool calls
+      const toolResults = [];
+      for (const part of functionCalls) {
+        const { name, args } = part.functionCall;
+        console.log(`  Tool call: ${name}(${JSON.stringify(args)})`);
+        const result = executeToolCall(name, args);
+        console.log(`  Result: ${result.slice(0, 100)}...`);
+        toolResults.push({
+          functionResponse: {
+            name,
+            response: { result },
+          },
+        });
+      }
+      // Add tool results to messages
+      messages.push({ role: "user", parts: toolResults });
+    } else {
+      // No function calls - check if we have the brief
+      const textParts = candidate.content.parts.filter((p) => p.text);
+      const fullText = textParts.map((p) => p.text).join("\n");
+
+      if (fullText.includes("BRIEF:")) {
+        const brief = fullText.split("BRIEF:")[1].trim();
+        return brief;
+      }
+
+      // Model finished without brief marker, use the full response
+      return fullText;
+    }
   }
 
-  return text.trim();
+  throw new Error("Max iterations reached without generating brief");
 }
 
 async function generateImage(prompt, apiKey) {
@@ -170,7 +214,6 @@ async function commitImageToPR(octokit, imageBuffer, context) {
   const imagePath = `.github/pr-visual/pr-${prNumber}.png`;
   const imageContent = imageBuffer.toString("base64");
 
-  // Check if file already exists
   let existingSha;
   try {
     const { data: existingFile } = await octokit.rest.repos.getContent({
@@ -181,10 +224,9 @@ async function commitImageToPR(octokit, imageBuffer, context) {
     });
     existingSha = existingFile.sha;
   } catch (e) {
-    // File doesn't exist yet, that's fine
+    // File doesn't exist yet
   }
 
-  // Create or update the file
   await octokit.rest.repos.createOrUpdateFileContents({
     owner,
     repo,
@@ -195,7 +237,6 @@ async function commitImageToPR(octokit, imageBuffer, context) {
     ...(existingSha && { sha: existingSha }),
   });
 
-  // Return the raw URL
   const imageUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/${imagePath}`;
   return { imagePath, imageUrl };
 }
@@ -220,7 +261,6 @@ async function postOrUpdateComment(octokit, context, imageUrl, style) {
 </details>
 `;
 
-  // Look for existing comment
   const { data: comments } = await octokit.rest.issues.listComments({
     owner,
     repo,
@@ -257,11 +297,8 @@ async function main() {
     const shouldComment = process.env.INPUT_COMMENT !== "false";
     const githubToken = process.env.GITHUB_TOKEN;
 
-    // Validate auth
     if (!apiKey && !hostedApiKey) {
-      core.setFailed(
-        "No authentication provided. Set gemini-api-key or hosted-api-key input."
-      );
+      core.setFailed("No authentication provided. Set gemini-api-key input.");
       return;
     }
 
@@ -278,15 +315,12 @@ async function main() {
     }
 
     const octokit = github.getOctokit(githubToken);
-
     let imagePrompt;
 
     if (customPrompt) {
-      // Use provided prompt directly (e.g., from gemini-cli)
-      console.log("Using custom prompt (skipping diff analysis)...");
+      console.log("Using custom prompt...");
       imagePrompt = customPrompt;
     } else {
-      // Default: analyze diff with Flash
       console.log("Getting branch diff...");
       const diff = await getBranchDiff();
 
@@ -298,23 +332,19 @@ async function main() {
       }
 
       console.log(`Found ${diff.split("\n").length} lines of diff`);
+      console.log("Starting agentic analysis (may read files for context)...");
 
-      console.log(`Analyzing diff with Gemini Flash (${style} style)...`);
-      imagePrompt = await analyzeDiff(diff, style, apiKey || hostedApiKey);
+      imagePrompt = await agenticAnalysis(diff, style, apiKey || hostedApiKey);
     }
 
-    console.log("Image prompt:");
-    console.log(imagePrompt.slice(0, 500) + "...");
+    console.log("\nCreative brief:");
+    console.log(imagePrompt.slice(0, 800) + (imagePrompt.length > 800 ? "..." : ""));
 
-    console.log("Generating image with Gemini Pro...");
+    console.log("\nGenerating image...");
     const imageBuffer = await generateImage(imagePrompt, apiKey || hostedApiKey);
 
     console.log("Committing image to PR branch...");
-    const { imagePath, imageUrl } = await commitImageToPR(
-      octokit,
-      imageBuffer,
-      context
-    );
+    const { imagePath, imageUrl } = await commitImageToPR(octokit, imageBuffer, context);
 
     console.log(`Image committed to: ${imagePath}`);
 
