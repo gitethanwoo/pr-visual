@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { select, confirm } from "@inquirer/prompts";
 import chalk from "chalk";
+import open from "open";
 import { getDiff } from "./git.js";
 import { analyzeDiff } from "./analyze.js";
 import { generateImage } from "./image.js";
@@ -242,6 +243,10 @@ async function runGenerate(args) {
     const outputPath = args.output ?? path.join(process.cwd(), `pr-visual-${Date.now()}.png`);
     fs.writeFileSync(outputPath, imageBuffer);
     console.log(chalk.green(`\nImage saved to: ${outputPath}`));
+    // Auto-open in interactive mode
+    if (!args.yes) {
+        await open(outputPath);
+    }
 }
 async function main() {
     const args = parseArgs();
