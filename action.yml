@@ -52,6 +52,10 @@ runs:
         cd action
         npm ci
 
+    - name: Install Gemini CLI
+      shell: bash
+      run: npm install -g @google/gemini-cli
+
     - name: Generate PR Visual
       id: generate
       shell: bash

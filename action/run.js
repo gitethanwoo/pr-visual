@@ -4,8 +4,8 @@ import { GoogleGenAI } from "@google/genai";
 import { simpleGit } from "simple-git";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execSync } from "node:child_process";
 
-const ANALYSIS_MODEL = "gemini-3-flash-preview";
 const IMAGE_MODEL = "gemini-3-pro-image-preview";
 
 const STYLE_INSTRUCTIONS = {
@@ -15,67 +15,6 @@ const STYLE_INSTRUCTIONS = {
   tech: `Use a TECH / DARK MODE style: Dark background (#0d1117), neon accents (cyan/magenta/green), terminal aesthetic, monospace fonts, glowing effects.`,
   playful: `Use a PLAYFUL / COLORFUL style: Bright cheerful colors, rounded friendly shapes, cartoon illustrations, rainbow but harmonious palette.`,
 };
-
-// Tool definitions for agentic file reading
-const tools = [
-  {
-    name: "readFile",
-    description: "Read the contents of a file from the repository to understand the code better. Use this when you need more context about what a changed file does or how it fits into the codebase.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: {
-          type: "string",
-          description: "The file path relative to the repository root (e.g., 'src/utils.ts' or 'package.json')"
-        }
-      },
-      required: ["path"]
-    }
-  },
-  {
-    name: "listFiles",
-    description: "List files in a directory to understand the project structure.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: {
-          type: "string",
-          description: "The directory path relative to the repository root (e.g., 'src' or '.')"
-        }
-      },
-      required: ["path"]
-    }
-  }
-];
-
-function executeToolCall(toolName, args) {
-  try {
-    if (toolName === "readFile") {
-      const filePath = path.resolve(process.cwd(), args.path);
-      if (!fs.existsSync(filePath)) {
-        return `File not found: ${args.path}`;
-      }
-      const content = fs.readFileSync(filePath, "utf-8");
-      // Limit file size to avoid token explosion
-      if (content.length > 10000) {
-        return content.slice(0, 10000) + "\n... (truncated)";
-      }
-      return content;
-    } else if (toolName === "listFiles") {
-      const dirPath = path.resolve(process.cwd(), args.path || ".");
-      if (!fs.existsSync(dirPath)) {
-        return `Directory not found: ${args.path}`;
-      }
-      const files = fs.readdirSync(dirPath, { withFileTypes: true });
-      return files
-        .map((f) => (f.isDirectory() ? `${f.name}/` : f.name))
-        .join("\n");
-    }
-    return `Unknown tool: ${toolName}`;
-  } catch (error) {
-    return `Error: ${error.message}`;
-  }
-}
 
 async function getBranchDiff() {
   const git = simpleGit();
@@ -92,15 +31,14 @@ async function getBranchDiff() {
   return diff;
 }
 
-async function agenticAnalysis(diff, style, apiKey) {
-  const ai = new GoogleGenAI({ apiKey });
+async function analyzeWithGeminiCli(diff, style) {
   const styleInstruction = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.clean;
 
-  const systemPrompt = `You are a creative director preparing a visual brief for an infographic about code changes.
+  const prompt = `You are a creative director preparing a visual brief for an infographic about code changes.
 
 Your job:
 1. Understand what this PR/diff actually does
-2. If the diff alone doesn't give you enough context, use the tools to read files
+2. If you need more context, read any relevant files in the codebase
 3. Once you understand, write a concise creative brief for an infographic
 
 Guidelines:
@@ -108,81 +46,43 @@ Guidelines:
 - Focus on the ONE key insight or change, not every line
 - Prefer clarity over comprehensiveness
 - A single compelling diagram beats 5 dense sections
-- ${styleInstruction}
 
-When you fully understand the changes and are ready, output your creative brief starting with "BRIEF:" on its own line.`;
-
-  const userPrompt = `Here's the git diff for this PR:
+Here's the git diff:
 
 \`\`\`diff
 ${diff.slice(0, 15000)}
 \`\`\`
 
-Analyze this diff. If you need to read any files to understand what the code does or how it fits into the project, use the readFile or listFiles tools. Once you understand the changes, write a creative brief for an infographic.`;
+Analyze this diff. Read any files you need to understand the context. Then output ONLY a creative brief for generating an infographic image. No preamble, just the brief.`;
 
-  let messages = [{ role: "user", parts: [{ text: userPrompt }] }];
-  let iterations = 0;
-  const maxIterations = 5;
+  // Write prompt to temp file to avoid shell escaping issues
+  const tempFile = path.join(process.cwd(), ".pr-visual-prompt.tmp");
+  fs.writeFileSync(tempFile, prompt);
 
-  while (iterations < maxIterations) {
-    iterations++;
-    console.log(`Agentic iteration ${iterations}...`);
+  try {
+    console.log("Running Gemini CLI for agentic analysis...");
 
-    const response = await ai.models.generateContent({
-      model: ANALYSIS_MODEL,
-      systemInstruction: systemPrompt,
-      contents: messages,
-      tools: [{ functionDeclarations: tools }],
-    });
-
-    const candidate = response.candidates?.[0];
-    if (!candidate?.content?.parts) {
-      // Log full response for debugging
-      console.error("Empty response from model:");
-      console.error("  candidates:", JSON.stringify(response.candidates, null, 2));
-      console.error("  promptFeedback:", JSON.stringify(response.promptFeedback, null, 2));
-      throw new Error("No response from model - check logs for details");
-    }
-
-    // Add assistant response to messages
-    messages.push({ role: "model", parts: candidate.content.parts });
-
-    // Check for function calls
-    const functionCalls = candidate.content.parts.filter((p) => p.functionCall);
-
-    if (functionCalls.length > 0) {
-      // Execute tool calls
-      const toolResults = [];
-      for (const part of functionCalls) {
-        const { name, args } = part.functionCall;
-        console.log(`  Tool call: ${name}(${JSON.stringify(args)})`);
-        const result = executeToolCall(name, args);
-        console.log(`  Result: ${result.slice(0, 100)}...`);
-        toolResults.push({
-          functionResponse: {
-            name,
-            response: { result },
-          },
-        });
+    // Run gemini CLI in headless mode with auto-approve for file reads
+    const output = execSync(
+      `cat "${tempFile}" | gemini -y`,
+      {
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+        timeout: 120000, // 2 minute timeout
+        env: {
+          ...process.env,
+          // GEMINI_API_KEY should already be set
+        },
       }
-      // Add tool results to messages
-      messages.push({ role: "user", parts: toolResults });
-    } else {
-      // No function calls - check if we have the brief
-      const textParts = candidate.content.parts.filter((p) => p.text);
-      const fullText = textParts.map((p) => p.text).join("\n");
+    );
 
-      if (fullText.includes("BRIEF:")) {
-        const brief = fullText.split("BRIEF:")[1].trim();
-        return brief;
-      }
-
-      // Model finished without brief marker, use the full response
-      return fullText;
+    return output.trim();
+  } finally {
+    // Clean up temp file
+    if (fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile);
     }
   }
-
-  throw new Error("Max iterations reached without generating brief");
 }
 
 async function generateImage(prompt, apiKey) {
@@ -441,15 +341,14 @@ async function main() {
       }
 
       console.log(`Found ${diff.split("\n").length} lines of diff`);
-      console.log("Starting agentic analysis (may read files for context)...");
 
-      imagePrompt = await agenticAnalysis(diff, style, apiKey || hostedApiKey);
+      imagePrompt = await analyzeWithGeminiCli(diff, style);
     }
 
     console.log("\nCreative brief:");
     console.log(imagePrompt.slice(0, 800) + (imagePrompt.length > 800 ? "..." : ""));
 
-    // Append style instruction to ensure it's applied (Flash might suggest different style)
+    // Append style instruction to ensure it's applied
     const styleInstruction = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.clean;
     const finalPrompt = `${imagePrompt}\n\nIMPORTANT STYLE OVERRIDE: ${styleInstruction}`;
 
