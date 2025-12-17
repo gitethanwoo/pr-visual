@@ -1,15 +1,15 @@
 name: Publish to npm
 
 on:
-  release:
-    types: [created]
+  push:
+    branches: [main]
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write  # Required for npm provenance
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +22,21 @@ jobs:
 
       - run: npm run build
 
-      - run: npm publish --provenance --access public
+      - name: Check if version changed
+        id: check
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view pr-visual version 2>/dev/null || echo "0.0.0")
+          if [ "$CURRENT" != "$PUBLISHED" ]; then
+            echo "publish=true" >> $GITHUB_OUTPUT
+            echo "Version $CURRENT not published yet (npm has $PUBLISHED)"
+          else
+            echo "publish=false" >> $GITHUB_OUTPUT
+            echo "Version $CURRENT already published, skipping"
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.publish == 'true'
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
