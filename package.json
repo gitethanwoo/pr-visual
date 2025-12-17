@@ -4,7 +4,7 @@
   "description": "Generate visual infographics for PR diffs using Gemini",
   "type": "module",
   "bin": {
-    "pr-visual": "./dist/cli.js"
+    "pr-visual": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
