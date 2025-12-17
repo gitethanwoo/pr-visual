@@ -2,7 +2,13 @@
 
 Generate infographic images from your git diffs using Gemini AI.
 
-![Example](https://raw.githubusercontent.com/gitethanwoo/pr-visual/main/.github/pr-visual/pr-1.png)
+**'Excalidraw' style:**
+
+![Example](https://github.com/user-attachments/assets/ecea517e-36b0-4f1f-9bac-e7dbea6ccc19)
+
+**'Clean' style:**
+
+![example-clean](https://github.com/user-attachments/assets/f62e4a3a-bb08-4c2e-8253-6fb6e96093a3)
 
 ## Installation
 
