@@ -445,17 +445,21 @@ async function main() {
     console.log("\nCreative brief:");
     console.log(imagePrompt.slice(0, 800) + (imagePrompt.length > 800 ? "..." : ""));
 
+    // Append style instruction to ensure it's applied (Flash might suggest different style)
+    const styleInstruction = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.clean;
+    const finalPrompt = `${imagePrompt}\n\nIMPORTANT STYLE OVERRIDE: ${styleInstruction}`;
+
     console.log("\nGenerating image...");
-    const imageBuffer = await generateImage(imagePrompt, apiKey || hostedApiKey);
+    const imageBuffer = await generateImage(finalPrompt, apiKey || hostedApiKey);
 
     console.log("Committing image to PR branch...");
-    const { imagePath, imageUrl, commitSha } = await commitImageToPR(octokit, imageBuffer, context, imagePrompt);
+    const { imagePath, imageUrl, commitSha } = await commitImageToPR(octokit, imageBuffer, context, finalPrompt);
 
     console.log(`Image committed to: ${imagePath}`);
 
     if (shouldComment) {
       console.log("Posting comment...");
-      await postOrUpdateComment(octokit, context, imageUrl, style, commitSha, imagePrompt);
+      await postOrUpdateComment(octokit, context, imageUrl, style, commitSha, finalPrompt);
     }
 
     core.setOutput("image-path", imagePath);
