@@ -9,6 +9,16 @@ import { login, logout, showAuthStatus, getAccessToken } from "./auth.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+export type VisualStyle = "clean" | "excalidraw" | "minimal" | "tech" | "playful";
+
+const STYLE_DESCRIPTIONS: Record<VisualStyle, string> = {
+  clean: "Corporate/PowerPoint style with polished boxes and professional colors",
+  excalidraw: "Hand-drawn, sketchy whiteboard style with rough edges",
+  minimal: "Simple and icon-heavy with lots of whitespace",
+  tech: "Dark mode with neon accents and terminal aesthetics",
+  playful: "Colorful, fun, with illustrations and friendly vibes",
+};
+
 const HELP_TEXT = `
 ${chalk.bold.cyan("PR Visual")} - Generate infographics from your git diffs using Gemini AI
 
@@ -24,9 +34,17 @@ ${chalk.bold("COMMANDS:")}
 ${chalk.bold("OPTIONS:")}
   -h, --help              Show this help message
   -m, --mode <mode>       Diff mode: branch, commit, staged, unstaged
+  -s, --style <style>     Visual style: clean, excalidraw, minimal, tech, playful
   -c, --commit <hash>     Commit hash (required when mode=commit)
   -y, --yes               Skip confirmation prompt
   -o, --output <path>     Output file path (default: pr-visual-{timestamp}.png)
+
+${chalk.bold("STYLES:")}
+  clean                   Corporate/PowerPoint style (default)
+  excalidraw              Hand-drawn whiteboard style
+  minimal                 Simple, icon-heavy, lots of whitespace
+  tech                    Dark mode with neon accents
+  playful                 Colorful and fun with illustrations
 
 ${chalk.bold("AUTHENTICATION:")}
   Option 1: Google OAuth (recommended)
@@ -63,6 +81,7 @@ interface CliArgs {
   command: string | null;
   help: boolean;
   mode: DiffMode | null;
+  style: VisualStyle | null;
   commit: string | null;
   yes: boolean;
   output: string | null;
@@ -74,6 +93,7 @@ function parseArgs(): CliArgs {
     command: null,
     help: false,
     mode: null,
+    style: null,
     commit: null,
     yes: false,
     output: null,
@@ -94,6 +114,10 @@ function parseArgs(): CliArgs {
       case "-m":
       case "--mode":
         result.mode = args[++i] as DiffMode;
+        break;
+      case "-s":
+      case "--style":
+        result.style = args[++i] as VisualStyle;
         break;
       case "-c":
       case "--commit":
@@ -117,6 +141,10 @@ function isValidMode(mode: string | null): mode is DiffMode {
   return mode !== null && ["branch", "commit", "staged", "unstaged"].includes(mode);
 }
 
+function isValidStyle(style: string | null): style is VisualStyle {
+  return style !== null && ["clean", "excalidraw", "minimal", "tech", "playful"].includes(style);
+}
+
 async function runGenerate(args: CliArgs): Promise<void> {
   // Check authentication
   const accessToken = await getAccessToken();
@@ -138,6 +166,7 @@ async function runGenerate(args: CliArgs): Promise<void> {
   }
 
   let mode: DiffMode;
+  let style: VisualStyle;
 
   if (args.mode) {
     if (!isValidMode(args.mode)) {
@@ -163,6 +192,33 @@ async function runGenerate(args: CliArgs): Promise<void> {
     mode = response.mode;
   }
 
+  if (args.style) {
+    if (!isValidStyle(args.style)) {
+      console.error(chalk.red(`Invalid style: ${args.style}`));
+      console.error(chalk.gray("Valid styles: clean, excalidraw, minimal, tech, playful"));
+      process.exit(1);
+    }
+    style = args.style;
+  } else if (isInteractive) {
+    const response = await inquirer.prompt<{ style: VisualStyle }>([
+      {
+        type: "list",
+        name: "style",
+        message: "Choose a visual style:",
+        choices: [
+          { name: "Clean - Corporate/PowerPoint style", value: "clean" },
+          { name: "Excalidraw - Hand-drawn whiteboard", value: "excalidraw" },
+          { name: "Minimal - Simple, icon-heavy", value: "minimal" },
+          { name: "Tech - Dark mode, neon accents", value: "tech" },
+          { name: "Playful - Colorful and fun", value: "playful" },
+        ],
+      },
+    ]);
+    style = response.style;
+  } else {
+    style = "clean"; // Default for non-interactive
+  }
+
   if (mode === "commit" && !args.commit && args.mode) {
     console.error(chalk.red("Commit mode requires --commit <hash> in non-interactive mode"));
     process.exit(1);
@@ -178,8 +234,8 @@ async function runGenerate(args: CliArgs): Promise<void> {
 
   console.log(chalk.gray(`Found ${diff.split("\n").length} lines of diff\n`));
 
-  console.log(chalk.gray("Analyzing diff with Gemini Flash..."));
-  const imagePrompt = await analyzeDiff(diff, accessToken ?? undefined);
+  console.log(chalk.gray(`Analyzing diff with Gemini Flash (${style} style)...`));
+  const imagePrompt = await analyzeDiff(diff, style, accessToken ?? undefined);
 
   console.log(chalk.green("\nGenerated image prompt:"));
   console.log(chalk.white(imagePrompt));

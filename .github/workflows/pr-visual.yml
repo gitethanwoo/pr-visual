@@ -1,0 +1,25 @@
+# PR Visual - Testing the action in this repo
+name: PR Visual
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  visualize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate PR Visual
+        uses: ./  # Use local action for testing
+        with:
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          style: clean

@@ -1,2 +1,2 @@
 #!/usr/bin/env node
-export {};
+export type VisualStyle = "clean" | "excalidraw" | "minimal" | "tech" | "playful";
