@@ -35,6 +35,8 @@ ${chalk.bold("OPTIONS:")}
   -h, --help              Show this help message
   -m, --mode <mode>       Diff mode: branch, commit, staged, unstaged
   -s, --style <style>     Visual style: clean, excalidraw, minimal, tech, playful
+  -p, --prompt <text>     Custom prompt (bypasses diff analysis)
+  --prompt-file <path>    Read prompt from file (bypasses diff analysis)
   -c, --commit <hash>     Commit hash (required when mode=commit)
   -y, --yes               Skip confirmation prompt
   -o, --output <path>     Output file path (default: pr-visual-{timestamp}.png)
@@ -82,6 +84,8 @@ interface CliArgs {
   help: boolean;
   mode: DiffMode | null;
   style: VisualStyle | null;
+  prompt: string | null;
+  promptFile: string | null;
   commit: string | null;
   yes: boolean;
   output: string | null;
@@ -94,6 +98,8 @@ function parseArgs(): CliArgs {
     help: false,
     mode: null,
     style: null,
+    prompt: null,
+    promptFile: null,
     commit: null,
     yes: false,
     output: null,
@@ -118,6 +124,13 @@ function parseArgs(): CliArgs {
       case "-s":
       case "--style":
         result.style = args[++i] as VisualStyle;
+        break;
+      case "-p":
+      case "--prompt":
+        result.prompt = args[++i];
+        break;
+      case "--prompt-file":
+        result.promptFile = args[++i];
         break;
       case "-c":
       case "--commit":
@@ -158,84 +171,102 @@ async function runGenerate(args: CliArgs): Promise<void> {
     process.exit(1);
   }
 
-  const isInteractive = !args.mode;
+  // Check for custom prompt (bypasses diff analysis)
+  let imagePrompt: string | null = null;
 
-  if (isInteractive) {
-    console.log(chalk.bold.cyan("\n  PR Visual - Generate infographics from your diffs\n"));
-    console.log(chalk.gray("  Tip: Run with --help to see non-interactive options\n"));
-  }
-
-  let mode: DiffMode;
-  let style: VisualStyle;
-
-  if (args.mode) {
-    if (!isValidMode(args.mode)) {
-      console.error(chalk.red(`Invalid mode: ${args.mode}`));
-      console.error(chalk.gray("Valid modes: branch, commit, staged, unstaged"));
+  if (args.prompt) {
+    imagePrompt = args.prompt;
+    console.log(chalk.cyan("\nUsing custom prompt (skipping diff analysis)...\n"));
+  } else if (args.promptFile) {
+    if (!fs.existsSync(args.promptFile)) {
+      console.error(chalk.red(`Prompt file not found: ${args.promptFile}`));
       process.exit(1);
     }
-    mode = args.mode;
-  } else {
-    const response = await inquirer.prompt<{ mode: DiffMode }>([
-      {
-        type: "list",
-        name: "mode",
-        message: "What would you like to visualize?",
-        choices: [
-          { name: "Branch diff (compare current branch to main/master)", value: "branch" },
-          { name: "Commit diff (changes in a specific commit)", value: "commit" },
-          { name: "Staged changes", value: "staged" },
-          { name: "Unstaged changes", value: "unstaged" },
-        ],
-      },
-    ]);
-    mode = response.mode;
+    imagePrompt = fs.readFileSync(args.promptFile, "utf-8").trim();
+    console.log(chalk.cyan(`\nUsing prompt from ${args.promptFile} (skipping diff analysis)...\n`));
   }
 
-  if (args.style) {
-    if (!isValidStyle(args.style)) {
-      console.error(chalk.red(`Invalid style: ${args.style}`));
-      console.error(chalk.gray("Valid styles: clean, excalidraw, minimal, tech, playful"));
+  // If no custom prompt, do the normal diff analysis flow
+  if (!imagePrompt) {
+    const isInteractive = !args.mode;
+
+    if (isInteractive) {
+      console.log(chalk.bold.cyan("\n  PR Visual - Generate infographics from your diffs\n"));
+      console.log(chalk.gray("  Tip: Run with --help to see non-interactive options\n"));
+    }
+
+    let mode: DiffMode;
+    let style: VisualStyle;
+
+    if (args.mode) {
+      if (!isValidMode(args.mode)) {
+        console.error(chalk.red(`Invalid mode: ${args.mode}`));
+        console.error(chalk.gray("Valid modes: branch, commit, staged, unstaged"));
+        process.exit(1);
+      }
+      mode = args.mode;
+    } else {
+      const response = await inquirer.prompt<{ mode: DiffMode }>([
+        {
+          type: "list",
+          name: "mode",
+          message: "What would you like to visualize?",
+          choices: [
+            { name: "Branch diff (compare current branch to main/master)", value: "branch" },
+            { name: "Commit diff (changes in a specific commit)", value: "commit" },
+            { name: "Staged changes", value: "staged" },
+            { name: "Unstaged changes", value: "unstaged" },
+          ],
+        },
+      ]);
+      mode = response.mode;
+    }
+
+    if (args.style) {
+      if (!isValidStyle(args.style)) {
+        console.error(chalk.red(`Invalid style: ${args.style}`));
+        console.error(chalk.gray("Valid styles: clean, excalidraw, minimal, tech, playful"));
+        process.exit(1);
+      }
+      style = args.style;
+    } else if (isInteractive) {
+      const response = await inquirer.prompt<{ style: VisualStyle }>([
+        {
+          type: "list",
+          name: "style",
+          message: "Choose a visual style:",
+          choices: [
+            { name: "Clean - Corporate/PowerPoint style", value: "clean" },
+            { name: "Excalidraw - Hand-drawn whiteboard", value: "excalidraw" },
+            { name: "Minimal - Simple, icon-heavy", value: "minimal" },
+            { name: "Tech - Dark mode, neon accents", value: "tech" },
+            { name: "Playful - Colorful and fun", value: "playful" },
+          ],
+        },
+      ]);
+      style = response.style;
+    } else {
+      style = "clean"; // Default for non-interactive
+    }
+
+    if (mode === "commit" && !args.commit && args.mode) {
+      console.error(chalk.red("Commit mode requires --commit <hash> in non-interactive mode"));
       process.exit(1);
     }
-    style = args.style;
-  } else if (isInteractive) {
-    const response = await inquirer.prompt<{ style: VisualStyle }>([
-      {
-        type: "list",
-        name: "style",
-        message: "Choose a visual style:",
-        choices: [
-          { name: "Clean - Corporate/PowerPoint style", value: "clean" },
-          { name: "Excalidraw - Hand-drawn whiteboard", value: "excalidraw" },
-          { name: "Minimal - Simple, icon-heavy", value: "minimal" },
-          { name: "Tech - Dark mode, neon accents", value: "tech" },
-          { name: "Playful - Colorful and fun", value: "playful" },
-        ],
-      },
-    ]);
-    style = response.style;
-  } else {
-    style = "clean"; // Default for non-interactive
+
+    console.log(chalk.gray("\nFetching diff..."));
+    const diff = await getDiff(mode, args.commit ?? undefined);
+
+    if (!diff.trim()) {
+      console.log(chalk.yellow("No changes found for the selected option."));
+      process.exit(0);
+    }
+
+    console.log(chalk.gray(`Found ${diff.split("\n").length} lines of diff\n`));
+
+    console.log(chalk.gray(`Analyzing diff with Gemini Flash (${style} style)...`));
+    imagePrompt = await analyzeDiff(diff, style, accessToken ?? undefined);
   }
-
-  if (mode === "commit" && !args.commit && args.mode) {
-    console.error(chalk.red("Commit mode requires --commit <hash> in non-interactive mode"));
-    process.exit(1);
-  }
-
-  console.log(chalk.gray("\nFetching diff..."));
-  const diff = await getDiff(mode, args.commit ?? undefined);
-
-  if (!diff.trim()) {
-    console.log(chalk.yellow("No changes found for the selected option."));
-    process.exit(0);
-  }
-
-  console.log(chalk.gray(`Found ${diff.split("\n").length} lines of diff\n`));
-
-  console.log(chalk.gray(`Analyzing diff with Gemini Flash (${style} style)...`));
-  const imagePrompt = await analyzeDiff(diff, style, accessToken ?? undefined);
 
   console.log(chalk.green("\nGenerated image prompt:"));
   console.log(chalk.white(imagePrompt));
