@@ -64,7 +64,7 @@ Analyze this diff. Read any files you need to understand the context. Then outpu
 
     // Run gemini CLI in headless mode with auto-approve for file reads
     const output = execSync(
-      `cat "${tempFile}" | gemini -y`,
+      `cat "${tempFile}" | gemini -y -m gemini-3-flash-preview`,
       {
         encoding: "utf-8",
         maxBuffer: 10 * 1024 * 1024, // 10MB buffer
