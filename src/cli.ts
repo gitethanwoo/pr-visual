@@ -5,28 +5,171 @@ import chalk from "chalk";
 import { getDiff, DiffMode } from "./git.js";
 import { analyzeDiff } from "./analyze.js";
 import { generateImage } from "./image.js";
+import { login, logout, showAuthStatus, getAccessToken } from "./auth.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-async function main() {
-  console.log(chalk.bold.cyan("\n  PR Visual - Generate infographics from your diffs\n"));
+const HELP_TEXT = `
+${chalk.bold.cyan("PR Visual")} - Generate infographics from your git diffs using Gemini AI
 
-  const { mode } = await inquirer.prompt<{ mode: DiffMode }>([
-    {
-      type: "list",
-      name: "mode",
-      message: "What would you like to visualize?",
-      choices: [
-        { name: "Branch diff (compare current branch to main/master)", value: "branch" },
-        { name: "Commit diff (changes in a specific commit)", value: "commit" },
-        { name: "Staged changes", value: "staged" },
-        { name: "Unstaged changes", value: "unstaged" },
-      ],
-    },
-  ]);
+${chalk.bold("USAGE:")}
+  pr-visual [command] [options]
+
+${chalk.bold("COMMANDS:")}
+  login                   Login with Google OAuth
+  logout                  Clear stored credentials
+  status                  Show authentication status
+  (none)                  Generate infographic (default)
+
+${chalk.bold("OPTIONS:")}
+  -h, --help              Show this help message
+  -m, --mode <mode>       Diff mode: branch, commit, staged, unstaged
+  -c, --commit <hash>     Commit hash (required when mode=commit)
+  -y, --yes               Skip confirmation prompt
+  -o, --output <path>     Output file path (default: pr-visual-{timestamp}.png)
+
+${chalk.bold("AUTHENTICATION:")}
+  Option 1: Google OAuth (recommended)
+    pr-visual login       Opens browser to authenticate with Google
+
+  Option 2: API Key
+    export GEMINI_API_KEY=your_key_here
+
+${chalk.bold("EXAMPLES:")}
+  ${chalk.gray("# Login with Google")}
+  pr-visual login
+
+  ${chalk.gray("# Interactive mode")}
+  pr-visual
+
+  ${chalk.gray("# Non-interactive: visualize staged changes")}
+  pr-visual --mode staged --yes
+
+  ${chalk.gray("# Non-interactive: visualize branch diff")}
+  pr-visual --mode branch --yes
+
+  ${chalk.gray("# Non-interactive: visualize specific commit")}
+  pr-visual --mode commit --commit abc1234 --yes
+
+  ${chalk.gray("# Custom output path")}
+  pr-visual --mode staged --yes --output my-diff.png
+
+${chalk.bold("NON-INTERACTIVE MODE (for CI/AI agents):")}
+  To run without prompts, provide --mode and --yes flags.
+  Example: pr-visual --mode branch --yes
+`;
+
+interface CliArgs {
+  command: string | null;
+  help: boolean;
+  mode: DiffMode | null;
+  commit: string | null;
+  yes: boolean;
+  output: string | null;
+}
+
+function parseArgs(): CliArgs {
+  const args = process.argv.slice(2);
+  const result: CliArgs = {
+    command: null,
+    help: false,
+    mode: null,
+    commit: null,
+    yes: false,
+    output: null,
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    switch (arg) {
+      case "login":
+      case "logout":
+      case "status":
+        result.command = arg;
+        break;
+      case "-h":
+      case "--help":
+        result.help = true;
+        break;
+      case "-m":
+      case "--mode":
+        result.mode = args[++i] as DiffMode;
+        break;
+      case "-c":
+      case "--commit":
+        result.commit = args[++i];
+        break;
+      case "-y":
+      case "--yes":
+        result.yes = true;
+        break;
+      case "-o":
+      case "--output":
+        result.output = args[++i];
+        break;
+    }
+  }
+
+  return result;
+}
+
+function isValidMode(mode: string | null): mode is DiffMode {
+  return mode !== null && ["branch", "commit", "staged", "unstaged"].includes(mode);
+}
+
+async function runGenerate(args: CliArgs): Promise<void> {
+  // Check authentication
+  const accessToken = await getAccessToken();
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!accessToken && !apiKey) {
+    console.log(chalk.red("\nNo authentication found.\n"));
+    console.log("Either:");
+    console.log(chalk.cyan("  1. Run: pr-visual login"));
+    console.log(chalk.cyan("  2. Set: export GEMINI_API_KEY=your_key\n"));
+    process.exit(1);
+  }
+
+  const isInteractive = !args.mode;
+
+  if (isInteractive) {
+    console.log(chalk.bold.cyan("\n  PR Visual - Generate infographics from your diffs\n"));
+    console.log(chalk.gray("  Tip: Run with --help to see non-interactive options\n"));
+  }
+
+  let mode: DiffMode;
+
+  if (args.mode) {
+    if (!isValidMode(args.mode)) {
+      console.error(chalk.red(`Invalid mode: ${args.mode}`));
+      console.error(chalk.gray("Valid modes: branch, commit, staged, unstaged"));
+      process.exit(1);
+    }
+    mode = args.mode;
+  } else {
+    const response = await inquirer.prompt<{ mode: DiffMode }>([
+      {
+        type: "list",
+        name: "mode",
+        message: "What would you like to visualize?",
+        choices: [
+          { name: "Branch diff (compare current branch to main/master)", value: "branch" },
+          { name: "Commit diff (changes in a specific commit)", value: "commit" },
+          { name: "Staged changes", value: "staged" },
+          { name: "Unstaged changes", value: "unstaged" },
+        ],
+      },
+    ]);
+    mode = response.mode;
+  }
+
+  if (mode === "commit" && !args.commit && args.mode) {
+    console.error(chalk.red("Commit mode requires --commit <hash> in non-interactive mode"));
+    process.exit(1);
+  }
 
   console.log(chalk.gray("\nFetching diff..."));
-  const diff = await getDiff(mode);
+  const diff = await getDiff(mode, args.commit ?? undefined);
 
   if (!diff.trim()) {
     console.log(chalk.yellow("No changes found for the selected option."));
@@ -36,32 +179,57 @@ async function main() {
   console.log(chalk.gray(`Found ${diff.split("\n").length} lines of diff\n`));
 
   console.log(chalk.gray("Analyzing diff with Gemini Flash..."));
-  const imagePrompt = await analyzeDiff(diff);
+  const imagePrompt = await analyzeDiff(diff, accessToken ?? undefined);
 
   console.log(chalk.green("\nGenerated image prompt:"));
   console.log(chalk.white(imagePrompt));
 
-  const { proceed } = await inquirer.prompt<{ proceed: boolean }>([
-    {
-      type: "confirm",
-      name: "proceed",
-      message: "Generate image with this prompt?",
-      default: true,
-    },
-  ]);
+  if (!args.yes) {
+    const { proceed } = await inquirer.prompt<{ proceed: boolean }>([
+      {
+        type: "confirm",
+        name: "proceed",
+        message: "Generate image with this prompt?",
+        default: true,
+      },
+    ]);
 
-  if (!proceed) {
-    console.log(chalk.yellow("Cancelled."));
-    process.exit(0);
+    if (!proceed) {
+      console.log(chalk.yellow("Cancelled."));
+      process.exit(0);
+    }
   }
 
   console.log(chalk.gray("\nGenerating image with Gemini Pro..."));
-  const imageBuffer = await generateImage(imagePrompt);
+  const imageBuffer = await generateImage(imagePrompt, accessToken ?? undefined);
 
-  const outputPath = path.join(process.cwd(), `pr-visual-${Date.now()}.png`);
+  const outputPath = args.output ?? path.join(process.cwd(), `pr-visual-${Date.now()}.png`);
   fs.writeFileSync(outputPath, imageBuffer);
 
   console.log(chalk.green(`\nImage saved to: ${outputPath}`));
+}
+
+async function main() {
+  const args = parseArgs();
+
+  if (args.help) {
+    console.log(HELP_TEXT);
+    process.exit(0);
+  }
+
+  switch (args.command) {
+    case "login":
+      await login();
+      break;
+    case "logout":
+      logout();
+      break;
+    case "status":
+      showAuthStatus();
+      break;
+    default:
+      await runGenerate(args);
+  }
 }
 
 main().catch((err) => {
