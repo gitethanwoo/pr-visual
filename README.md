@@ -1,6 +1,6 @@
 # pr-visual
 
-Generate infographic images from your git diffs using Gemini AI.
+Generate infographic images from pull requests using Gemini, with Nano Banana Pro and Gemini 3 Flash
 
 **'Excalidraw' style:**
 
