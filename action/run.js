@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { execSync } from "node:child_process";
 
 const IMAGE_MODEL = "gemini-3-pro-image-preview";
+const RELEASE_TAG = "pr-visual-assets";
 
 const STYLE_INSTRUCTIONS = {
   clean: `Use a CLEAN / CORPORATE style: Professional PowerPoint aesthetic, polished boxes with shadows, blues/grays/teal palette, clean sans-serif fonts, structured grid layout.`,
@@ -110,91 +111,121 @@ async function generateImage(prompt, apiKey) {
   throw new Error("No image data in response");
 }
 
-async function commitImageToPR(octokit, imageBuffer, context, prompt) {
+async function getOrCreateRelease(octokit, owner, repo) {
+  // Try to get existing release
+  try {
+    const { data: release } = await octokit.rest.repos.getReleaseByTag({
+      owner,
+      repo,
+      tag: RELEASE_TAG,
+    });
+    return release;
+  } catch (e) {
+    if (e.status !== 404) throw e;
+  }
+
+  // Create the release
+  console.log("Creating pr-visual-assets release...");
+  const { data: release } = await octokit.rest.repos.createRelease({
+    owner,
+    repo,
+    tag_name: RELEASE_TAG,
+    name: "PR Visual Assets",
+    body: "Auto-generated release for storing PR visual images. Do not delete.",
+    draft: false,
+    prerelease: false,
+  });
+
+  return release;
+}
+
+async function uploadToRelease(octokit, imageBuffer, context, prompt) {
   const { owner, repo } = context.repo;
   const prNumber = context.payload.pull_request.number;
-  const headRef = context.payload.pull_request.head.ref;
   const commitSha = context.payload.pull_request.head.sha.slice(0, 7);
 
-  // Use commit SHA in filename so each push gets its own image
-  const imagePath = `.github/pr-visual/pr-${prNumber}-${commitSha}.png`;
-  const promptPath = `.github/pr-visual/pr-${prNumber}-${commitSha}.txt`;
-  const imageContent = imageBuffer.toString("base64");
-  const promptContent = Buffer.from(prompt).toString("base64");
+  const release = await getOrCreateRelease(octokit, owner, repo);
 
-  // Commit both image and prompt file
-  await octokit.rest.repos.createOrUpdateFileContents({
+  const imageName = `pr-${prNumber}-${commitSha}.png`;
+  const promptName = `pr-${prNumber}-${commitSha}.txt`;
+
+  // Delete existing assets with same name (if re-running on same commit)
+  for (const asset of release.assets) {
+    if (asset.name === imageName || asset.name === promptName) {
+      await octokit.rest.repos.deleteReleaseAsset({
+        owner,
+        repo,
+        asset_id: asset.id,
+      });
+    }
+  }
+
+  // Upload image
+  console.log(`Uploading ${imageName} to release...`);
+  const { data: imageAsset } = await octokit.rest.repos.uploadReleaseAsset({
     owner,
     repo,
-    path: imagePath,
-    message: `Add PR visual for #${prNumber} (${commitSha})`,
-    content: imageContent,
-    branch: headRef,
+    release_id: release.id,
+    name: imageName,
+    data: imageBuffer,
   });
 
-  await octokit.rest.repos.createOrUpdateFileContents({
+  // Upload prompt
+  console.log(`Uploading ${promptName} to release...`);
+  await octokit.rest.repos.uploadReleaseAsset({
     owner,
     repo,
-    path: promptPath,
-    message: `Add PR visual prompt for #${prNumber} (${commitSha})`,
-    content: promptContent,
-    branch: headRef,
+    release_id: release.id,
+    name: promptName,
+    data: Buffer.from(prompt),
   });
 
-  const imageUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/${imagePath}`;
-  return { imagePath, imageUrl, commitSha };
+  const imageUrl = imageAsset.browser_download_url;
+  return { imageName, imageUrl, commitSha };
 }
 
 async function getExistingImages(octokit, context) {
   const { owner, repo } = context.repo;
   const prNumber = context.payload.pull_request.number;
-  const headRef = context.payload.pull_request.head.ref;
 
   try {
-    const { data: contents } = await octokit.rest.repos.getContent({
+    const { data: release } = await octokit.rest.repos.getReleaseByTag({
       owner,
       repo,
-      path: ".github/pr-visual",
-      ref: headRef,
+      tag: RELEASE_TAG,
     });
 
-    if (!Array.isArray(contents)) return [];
-
-    // Filter to images for this PR, extract commit SHA from filename
-    const prImages = contents
-      .filter((f) => f.name.startsWith(`pr-${prNumber}-`) && f.name.endsWith(".png"))
-      .map((f) => {
-        const match = f.name.match(/pr-\d+-([a-f0-9]+)\.png/);
+    // Filter to images for this PR
+    const prImages = release.assets
+      .filter((a) => a.name.startsWith(`pr-${prNumber}-`) && a.name.endsWith(".png"))
+      .map((a) => {
+        const match = a.name.match(/pr-\d+-([a-f0-9]+)\.png/);
         const sha = match ? match[1] : null;
         return {
-          name: f.name,
+          name: a.name,
           sha,
-          url: `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/.github/pr-visual/${f.name}`,
-          promptUrl: `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/.github/pr-visual/pr-${prNumber}-${sha}.txt`,
+          url: a.browser_download_url,
+          promptAsset: release.assets.find((p) => p.name === `pr-${prNumber}-${sha}.txt`),
         };
       });
 
     // Fetch prompts for each image
     for (const img of prImages) {
-      try {
-        const { data: promptFile } = await octokit.rest.repos.getContent({
-          owner,
-          repo,
-          path: `.github/pr-visual/pr-${prNumber}-${img.sha}.txt`,
-          ref: headRef,
-        });
-        if (promptFile.content) {
-          img.prompt = Buffer.from(promptFile.content, "base64").toString("utf-8");
+      if (img.promptAsset) {
+        try {
+          const response = await fetch(img.promptAsset.browser_download_url);
+          img.prompt = await response.text();
+        } catch (e) {
+          img.prompt = null;
         }
-      } catch (e) {
-        // Prompt file doesn't exist for older images
+      } else {
         img.prompt = null;
       }
     }
 
     return prImages;
   } catch (e) {
-    // Directory doesn't exist yet
+    // Release doesn't exist yet
     return [];
   }
 }
@@ -230,7 +261,7 @@ ${formatPrompt(img.prompt)}
 \`\`\`
 
 </details>`;
-        return `### \`${img.sha}\`\n![${img.sha}](${img.url}?t=${Date.now()})\n${promptSection}`;
+        return `### \`${img.sha}\`\n![${img.sha}](${img.url})\n${promptSection}`;
       })
       .join("\n\n");
     historySection = `
@@ -248,7 +279,7 @@ ${imageList}
 
 **Latest** (\`${currentSha}\`):
 
-![PR Infographic](${imageUrl}?t=${Date.now()})
+![PR Infographic](${imageUrl})
 
 <details>
 <summary>View prompt</summary>
@@ -355,17 +386,17 @@ async function main() {
     console.log("\nGenerating image...");
     const imageBuffer = await generateImage(finalPrompt, apiKey || hostedApiKey);
 
-    console.log("Committing image to PR branch...");
-    const { imagePath, imageUrl, commitSha } = await commitImageToPR(octokit, imageBuffer, context, finalPrompt);
+    console.log("Uploading image to GitHub Release...");
+    const { imageName, imageUrl, commitSha } = await uploadToRelease(octokit, imageBuffer, context, finalPrompt);
 
-    console.log(`Image committed to: ${imagePath}`);
+    console.log(`Image uploaded: ${imageName}`);
 
     if (shouldComment) {
       console.log("Posting comment...");
       await postOrUpdateComment(octokit, context, imageUrl, style, commitSha, finalPrompt);
     }
 
-    core.setOutput("image-path", imagePath);
+    core.setOutput("image-path", imageName);
     core.setOutput("image-url", imageUrl);
 
     console.log("PR Visual complete!");

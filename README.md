@@ -99,8 +99,6 @@ name: PR Visual
 on:
   pull_request:
     types: [opened, synchronize]
-    paths-ignore:
-      - '.github/pr-visual/**'  # Prevent infinite loop
 
 jobs:
   visualize:
@@ -123,7 +121,7 @@ jobs:
 The action will:
 - Use [Gemini CLI](https://github.com/google-gemini/gemini-cli) to intelligently analyze the PR (can read files for context, not just the diff)
 - Generate an infographic from the analysis
-- Commit it to `.github/pr-visual/pr-{number}-{sha}.png` (each push gets its own image)
+- Upload it to a GitHub Release (no commits to your PR branch!)
 - Post a comment with the image and a collapsible prompt/history section
 
 ## CLI Reference
