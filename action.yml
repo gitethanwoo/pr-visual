@@ -1,0 +1,62 @@
+name: 'PR Visual'
+description: 'Generate infographic images from PR diffs using Gemini AI'
+author: 'pr-visual'
+
+branding:
+  icon: 'image'
+  color: 'purple'
+
+inputs:
+  gemini-api-key:
+    description: 'Gemini API key for image generation'
+    required: false
+  hosted-api-key:
+    description: 'API key for hosted pr-visual service (future)'
+    required: false
+  style:
+    description: 'Visual style: clean, excalidraw, minimal, tech, playful'
+    required: false
+    default: 'clean'
+  comment:
+    description: 'Whether to post a comment on the PR'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'GitHub token for API access'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  image-path:
+    description: 'Path to the generated image'
+    value: ${{ steps.generate.outputs.image-path }}
+  image-url:
+    description: 'URL to the image in the repo'
+    value: ${{ steps.generate.outputs.image-url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        cd action
+        npm ci
+
+    - name: Generate PR Visual
+      id: generate
+      shell: bash
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        HOSTED_API_KEY: ${{ inputs.hosted-api-key }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_STYLE: ${{ inputs.style }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: node ${{ github.action_path }}/action/run.js
