@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import inquirer from "inquirer";
+import { select, confirm } from "@inquirer/prompts";
 import chalk from "chalk";
 import { getDiff } from "./git.js";
 import { analyzeDiff } from "./analyze.js";
@@ -178,20 +178,15 @@ async function runGenerate(args) {
             mode = args.mode;
         }
         else {
-            const response = await inquirer.prompt([
-                {
-                    type: "list",
-                    name: "mode",
-                    message: "What would you like to visualize?",
-                    choices: [
-                        { name: "Branch diff (compare current branch to main/master)", value: "branch" },
-                        { name: "Commit diff (changes in a specific commit)", value: "commit" },
-                        { name: "Staged changes", value: "staged" },
-                        { name: "Unstaged changes", value: "unstaged" },
-                    ],
-                },
-            ]);
-            mode = response.mode;
+            mode = await select({
+                message: "What would you like to visualize?",
+                choices: [
+                    { name: "Branch diff (compare current branch to main/master)", value: "branch" },
+                    { name: "Commit diff (changes in a specific commit)", value: "commit" },
+                    { name: "Staged changes", value: "staged" },
+                    { name: "Unstaged changes", value: "unstaged" },
+                ],
+            });
         }
         if (args.style) {
             if (!isValidStyle(args.style)) {
@@ -202,21 +197,16 @@ async function runGenerate(args) {
             style = args.style;
         }
         else if (isInteractive) {
-            const response = await inquirer.prompt([
-                {
-                    type: "list",
-                    name: "style",
-                    message: "Choose a visual style:",
-                    choices: [
-                        { name: "Clean - Corporate/PowerPoint style", value: "clean" },
-                        { name: "Excalidraw - Hand-drawn whiteboard", value: "excalidraw" },
-                        { name: "Minimal - Simple, icon-heavy", value: "minimal" },
-                        { name: "Tech - Dark mode, neon accents", value: "tech" },
-                        { name: "Playful - Colorful and fun", value: "playful" },
-                    ],
-                },
-            ]);
-            style = response.style;
+            style = await select({
+                message: "Choose a visual style:",
+                choices: [
+                    { name: "Clean - Corporate/PowerPoint style", value: "clean" },
+                    { name: "Excalidraw - Hand-drawn whiteboard", value: "excalidraw" },
+                    { name: "Minimal - Simple, icon-heavy", value: "minimal" },
+                    { name: "Tech - Dark mode, neon accents", value: "tech" },
+                    { name: "Playful - Colorful and fun", value: "playful" },
+                ],
+            });
         }
         else {
             style = "clean"; // Default for non-interactive
@@ -238,14 +228,10 @@ async function runGenerate(args) {
     console.log(chalk.green("\nGenerated image prompt:"));
     console.log(chalk.white(imagePrompt));
     if (!args.yes) {
-        const { proceed } = await inquirer.prompt([
-            {
-                type: "confirm",
-                name: "proceed",
-                message: "Generate image with this prompt?",
-                default: true,
-            },
-        ]);
+        const proceed = await confirm({
+            message: "Generate image with this prompt?",
+            default: true,
+        });
         if (!proceed) {
             console.log(chalk.yellow("Cancelled."));
             process.exit(0);

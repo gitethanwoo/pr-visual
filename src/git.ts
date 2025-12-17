@@ -1,5 +1,5 @@
 import { simpleGit, SimpleGit, LogResult, DefaultLogFields } from "simple-git";
-import inquirer from "inquirer";
+import { select } from "@inquirer/prompts";
 
 export type DiffMode = "branch" | "commit" | "staged" | "unstaged";
 
@@ -15,17 +15,13 @@ async function getDefaultBranch(): Promise<string> {
 async function selectCommit(): Promise<string> {
   const log = await git.log({ maxCount: 20 });
 
-  const { commit } = await inquirer.prompt<{ commit: string }>([
-    {
-      type: "list",
-      name: "commit",
-      message: "Select a commit:",
-      choices: log.all.map((c: DefaultLogFields) => ({
-        name: `${c.hash.slice(0, 7)} - ${c.message.slice(0, 60)}`,
-        value: c.hash,
-      })),
-    },
-  ]);
+  const commit = await select({
+    message: "Select a commit:",
+    choices: log.all.map((c: DefaultLogFields) => ({
+      name: `${c.hash.slice(0, 7)} - ${c.message.slice(0, 60)}`,
+      value: c.hash,
+    })),
+  });
 
   return commit;
 }
