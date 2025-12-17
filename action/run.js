@@ -206,57 +206,162 @@ async function generateImage(prompt, apiKey) {
   throw new Error("No image data in response");
 }
 
-async function commitImageToPR(octokit, imageBuffer, context) {
+async function commitImageToPR(octokit, imageBuffer, context, prompt) {
   const { owner, repo } = context.repo;
   const prNumber = context.payload.pull_request.number;
   const headRef = context.payload.pull_request.head.ref;
+  const commitSha = context.payload.pull_request.head.sha.slice(0, 7);
 
-  const imagePath = `.github/pr-visual/pr-${prNumber}.png`;
+  // Use commit SHA in filename so each push gets its own image
+  const imagePath = `.github/pr-visual/pr-${prNumber}-${commitSha}.png`;
+  const promptPath = `.github/pr-visual/pr-${prNumber}-${commitSha}.txt`;
   const imageContent = imageBuffer.toString("base64");
+  const promptContent = Buffer.from(prompt).toString("base64");
 
-  let existingSha;
-  try {
-    const { data: existingFile } = await octokit.rest.repos.getContent({
-      owner,
-      repo,
-      path: imagePath,
-      ref: headRef,
-    });
-    existingSha = existingFile.sha;
-  } catch (e) {
-    // File doesn't exist yet
-  }
-
+  // Commit both image and prompt file
   await octokit.rest.repos.createOrUpdateFileContents({
     owner,
     repo,
     path: imagePath,
-    message: `Update PR visual for #${prNumber}`,
+    message: `Add PR visual for #${prNumber} (${commitSha})`,
     content: imageContent,
     branch: headRef,
-    ...(existingSha && { sha: existingSha }),
+  });
+
+  await octokit.rest.repos.createOrUpdateFileContents({
+    owner,
+    repo,
+    path: promptPath,
+    message: `Add PR visual prompt for #${prNumber} (${commitSha})`,
+    content: promptContent,
+    branch: headRef,
   });
 
   const imageUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/${imagePath}`;
-  return { imagePath, imageUrl };
+  return { imagePath, imageUrl, commitSha };
 }
 
-async function postOrUpdateComment(octokit, context, imageUrl, style) {
+async function getExistingImages(octokit, context) {
+  const { owner, repo } = context.repo;
+  const prNumber = context.payload.pull_request.number;
+  const headRef = context.payload.pull_request.head.ref;
+
+  try {
+    const { data: contents } = await octokit.rest.repos.getContent({
+      owner,
+      repo,
+      path: ".github/pr-visual",
+      ref: headRef,
+    });
+
+    if (!Array.isArray(contents)) return [];
+
+    // Filter to images for this PR, extract commit SHA from filename
+    const prImages = contents
+      .filter((f) => f.name.startsWith(`pr-${prNumber}-`) && f.name.endsWith(".png"))
+      .map((f) => {
+        const match = f.name.match(/pr-\d+-([a-f0-9]+)\.png/);
+        const sha = match ? match[1] : null;
+        return {
+          name: f.name,
+          sha,
+          url: `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/.github/pr-visual/${f.name}`,
+          promptUrl: `https://raw.githubusercontent.com/${owner}/${repo}/${headRef}/.github/pr-visual/pr-${prNumber}-${sha}.txt`,
+        };
+      });
+
+    // Fetch prompts for each image
+    for (const img of prImages) {
+      try {
+        const { data: promptFile } = await octokit.rest.repos.getContent({
+          owner,
+          repo,
+          path: `.github/pr-visual/pr-${prNumber}-${img.sha}.txt`,
+          ref: headRef,
+        });
+        if (promptFile.content) {
+          img.prompt = Buffer.from(promptFile.content, "base64").toString("utf-8");
+        }
+      } catch (e) {
+        // Prompt file doesn't exist for older images
+        img.prompt = null;
+      }
+    }
+
+    return prImages;
+  } catch (e) {
+    // Directory doesn't exist yet
+    return [];
+  }
+}
+
+async function postOrUpdateComment(octokit, context, imageUrl, style, currentSha, currentPrompt) {
   const { owner, repo } = context.repo;
   const prNumber = context.payload.pull_request.number;
 
+  // Get all existing images for this PR
+  const existingImages = await getExistingImages(octokit, context);
+
+  // Filter out the current image for the history section
+  const olderImages = existingImages.filter((img) => img.sha !== currentSha);
+
   const commentMarker = "<!-- pr-visual-comment -->";
+
+  // Format prompt for display (truncate if very long)
+  const formatPrompt = (prompt) => {
+    if (!prompt) return "_No prompt saved_";
+    const maxLen = 2000;
+    return prompt.length > maxLen ? prompt.slice(0, maxLen) + "..." : prompt;
+  };
+
+  let historySection = "";
+  if (olderImages.length > 0) {
+    const imageList = olderImages
+      .map((img) => {
+        const promptSection = `<details>
+<summary>View prompt</summary>
+
+\`\`\`
+${formatPrompt(img.prompt)}
+\`\`\`
+
+</details>`;
+        return `### \`${img.sha}\`\n![${img.sha}](${img.url}?t=${Date.now()})\n${promptSection}`;
+      })
+      .join("\n\n");
+    historySection = `
+<details>
+<summary>Previous versions (${olderImages.length})</summary>
+
+${imageList}
+
+</details>
+`;
+  }
+
   const commentBody = `${commentMarker}
 ## PR Visual
+
+**Latest** (\`${currentSha}\`):
 
 ![PR Infographic](${imageUrl}?t=${Date.now()})
 
 <details>
-<summary>Generated with pr-visual</summary>
+<summary>View prompt</summary>
 
-**Style:** ${style}
+\`\`\`
+${formatPrompt(currentPrompt)}
+\`\`\`
 
-[View full size](${imageUrl})
+</details>
+
+${historySection}
+<details>
+<summary>About</summary>
+
+**Style:** ${style} | [View full size](${imageUrl})
+
+Generated with [pr-visual](https://github.com/gitethanwoo/pr-visual)
 
 </details>
 `;
@@ -344,13 +449,13 @@ async function main() {
     const imageBuffer = await generateImage(imagePrompt, apiKey || hostedApiKey);
 
     console.log("Committing image to PR branch...");
-    const { imagePath, imageUrl } = await commitImageToPR(octokit, imageBuffer, context);
+    const { imagePath, imageUrl, commitSha } = await commitImageToPR(octokit, imageBuffer, context, imagePrompt);
 
     console.log(`Image committed to: ${imagePath}`);
 
     if (shouldComment) {
       console.log("Posting comment...");
-      await postOrUpdateComment(octokit, context, imageUrl, style);
+      await postOrUpdateComment(octokit, context, imageUrl, style, commitSha, imagePrompt);
     }
 
     core.setOutput("image-path", imagePath);
