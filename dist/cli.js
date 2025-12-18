@@ -210,9 +210,8 @@ async function runQuickFlow() {
     });
     if (next === "setup") {
         console.log();
-        printStep("Automatic PR setup coming soon.");
-        printStep("For now, see: https://github.com/gitethanwoo/pr-visual#github-action");
-        console.log();
+        printStep("Opening GitHub App installation...");
+        await open("https://github.com/apps/pr-visual");
     }
     else if (next === "another") {
         console.log();
