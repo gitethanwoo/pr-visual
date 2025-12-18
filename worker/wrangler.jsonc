@@ -1,0 +1,42 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "pr-visual",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-12-17",
+	"observability": {
+		"enabled": true
+	},
+
+	// D1 Database for idempotency + installation tracking
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "pr-visual",
+			"database_id": "0f1da1e0-5f45-4023-bcd5-6febcbfc34de"
+		}
+	],
+
+	// R2 for image storage
+	"r2_buckets": [
+		{
+			"binding": "IMAGES",
+			"bucket_name": "pr-visual-images"
+		}
+	],
+
+	// Workflow for PR processing
+	"workflows": [
+		{
+			"name": "pr-visual-workflow",
+			"binding": "PR_WORKFLOW",
+			"class_name": "PRVisualWorkflow"
+		}
+	]
+
+	// Secrets (set via wrangler secret put):
+	// - GITHUB_APP_ID
+	// - GITHUB_PRIVATE_KEY
+	// - GITHUB_WEBHOOK_SECRET
+	// - GEMINI_API_KEY
+	// - POLAR_API_KEY
+}

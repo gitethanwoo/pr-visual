@@ -21,6 +21,17 @@ const STYLE_DESCRIPTIONS: Record<VisualStyle, string> = {
   playful: "Colorful, fun, with illustrations and friendly vibes",
 };
 
+const LOADING_MESSAGES = [
+  "Gemini is analyzing the changes...",
+  "Dreaming up a creative visual...",
+  "Composing the layout...",
+  "Applying artistic touches...",
+  "Rendering pixels...",
+  "Finalizing your infographic...",
+  "Almost there...",
+  "Just a few more seconds...",
+];
+
 const HELP_TEXT = `
 ${chalk.bold.cyan("PR Visual")} - Generate infographics from your git diffs using Gemini AI
 
@@ -193,8 +204,27 @@ async function runQuickFlow(): Promise<void> {
   const imagePrompt = await analyzeDiff(diff, style);
   spinner.update("Generating image");
 
-  const imageBuffer = await generateImage(imagePrompt, accessToken ?? undefined);
-  spinner.stop();
+  // Rotate through loading messages
+  let msgIndex = 0;
+  const interval = setInterval(() => {
+    msgIndex = (msgIndex + 1) % LOADING_MESSAGES.length;
+    spinner.update(LOADING_MESSAGES[msgIndex]);
+  }, 4000);
+
+  let imageBuffer: Buffer;
+  try {
+    imageBuffer = await generateImage(
+      imagePrompt,
+      accessToken ?? undefined,
+      3,
+      (attempt) => {
+        spinner.update(chalk.yellow(`Retrying (attempt ${attempt}/3)...`));
+      }
+    );
+  } finally {
+    clearInterval(interval);
+    spinner.stop();
+  }
 
   const outputPath = path.join(process.cwd(), `pr-visual-${Date.now()}.png`);
   fs.writeFileSync(outputPath, imageBuffer);
@@ -353,8 +383,29 @@ async function runGenerate(args: CliArgs): Promise<void> {
     }
   }
 
-  console.log(chalk.gray("\nGenerating image with Gemini Pro..."));
-  const imageBuffer = await generateImage(imagePrompt, accessToken ?? undefined);
+  const spinner = createSpinner("Generating image with Gemini Pro...");
+
+  // Rotate through loading messages
+  let msgIndex = 0;
+  const interval = setInterval(() => {
+    msgIndex = (msgIndex + 1) % LOADING_MESSAGES.length;
+    spinner.update(LOADING_MESSAGES[msgIndex]);
+  }, 4000);
+
+  let imageBuffer: Buffer;
+  try {
+    imageBuffer = await generateImage(
+      imagePrompt,
+      accessToken ?? undefined,
+      3,
+      (attempt) => {
+        spinner.update(chalk.yellow(`Retrying (attempt ${attempt}/3)...`));
+      }
+    );
+  } finally {
+    clearInterval(interval);
+    spinner.stop();
+  }
 
   const outputPath = args.output ?? path.join(process.cwd(), `pr-visual-${Date.now()}.png`);
   fs.writeFileSync(outputPath, imageBuffer);

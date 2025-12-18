@@ -85,9 +85,17 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function generateImage(prompt: string, accessToken?: string, retries = 3): Promise<Buffer> {
-  const generate = accessToken ? () => generateWithOAuth(prompt, accessToken) :
-    process.env.GEMINI_API_KEY ? () => generateWithApiKey(prompt) : null;
+export async function generateImage(
+  prompt: string,
+  accessToken?: string,
+  retries = 3,
+  onRetry?: (attempt: number, error: Error) => void
+): Promise<Buffer> {
+  const generate = accessToken
+    ? () => generateWithOAuth(prompt, accessToken)
+    : process.env.GEMINI_API_KEY
+    ? () => generateWithApiKey(prompt)
+    : null;
 
   if (!generate) {
     throw new Error("No authentication available");
@@ -100,7 +108,9 @@ export async function generateImage(prompt: string, accessToken?: string, retrie
     } catch (err) {
       lastError = err as Error;
       if (attempt < retries) {
-        await sleep(1000 * attempt); // backoff: 1s, 2s, 3s
+        onRetry?.(attempt, lastError);
+        // Exponential backoff: 2s, 4s, 8s...
+        await sleep(Math.pow(2, attempt) * 1000);
       }
     }
   }

@@ -54,9 +54,12 @@ async function generateWithApiKey(prompt) {
 async function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
-export async function generateImage(prompt, accessToken, retries = 3) {
-    const generate = accessToken ? () => generateWithOAuth(prompt, accessToken) :
-        process.env.GEMINI_API_KEY ? () => generateWithApiKey(prompt) : null;
+export async function generateImage(prompt, accessToken, retries = 3, onRetry) {
+    const generate = accessToken
+        ? () => generateWithOAuth(prompt, accessToken)
+        : process.env.GEMINI_API_KEY
+            ? () => generateWithApiKey(prompt)
+            : null;
     if (!generate) {
         throw new Error("No authentication available");
     }
@@ -68,7 +71,9 @@ export async function generateImage(prompt, accessToken, retries = 3) {
         catch (err) {
             lastError = err;
             if (attempt < retries) {
-                await sleep(1000 * attempt); // backoff: 1s, 2s, 3s
+                onRetry?.(attempt, lastError);
+                // Exponential backoff: 2s, 4s, 8s...
+                await sleep(Math.pow(2, attempt) * 1000);
             }
         }
     }
