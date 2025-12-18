@@ -10,11 +10,11 @@ const IMAGE_MODEL = "gemini-3-pro-image-preview";
 const RELEASE_TAG = "pr-visual-assets";
 
 const STYLE_INSTRUCTIONS = {
-  clean: `Use a CLEAN / CORPORATE style: Professional PowerPoint aesthetic, polished boxes with shadows, blues/grays/teal palette, clean sans-serif fonts, structured grid layout.`,
-  excalidraw: `Use an EXCALIDRAW / HAND-DRAWN style: Sketchy whiteboard aesthetic, rough imperfect lines, black on cream with pastel highlights, hand-written feel.`,
-  minimal: `Use a MINIMAL / ICON-HEAVY style: Extreme simplicity, lots of whitespace, large bold icons, monochrome with one accent color, very limited text.`,
-  tech: `Use a TECH / DARK MODE style: Dark background (#0d1117), neon accents (cyan/magenta/green), terminal aesthetic, monospace fonts, glowing effects.`,
-  playful: `Use a PLAYFUL / COLORFUL style: Bright cheerful colors, rounded friendly shapes, cartoon illustrations, rainbow but harmonious palette.`,
+  clean: `Clean, beautiful, modern professional PowerPoint style.`,
+  excalidraw: `Excalidraw / hand-drawn style with a nice handwritten feel.`,
+  minimal: `Minimal and icon-heavy with generous whitespace.`,
+  tech: `Dark mode with neon accents and terminal aesthetic.`,
+  playful: `Playful and colorful with friendly rounded shapes.`,
 };
 
 async function getBranchDiff() {
@@ -45,7 +45,8 @@ Your job:
 
 Guidelines:
 - DISTINCT PANELS: 2-4 unrelated changes = 2-4 panels. Arrange in a grid layout.
-- Each panel: a short title + 1-2 sentence explanation of the insight/reasoning
+- Each panel MUST have: title + diagram + 1-2 sentence explanation text visible in the image
+- The explanation text is critical - it answers "why did we do this?" not just "what changed"
 - Pick ONE archetype per panel: before/after, process flow, architecture diagram, or checklist
 - Use function/file names but EXPLAIN the change, don't just list files
 - Do not invent metrics. Use real values or omit.
