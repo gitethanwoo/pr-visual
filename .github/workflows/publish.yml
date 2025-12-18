@@ -6,7 +6,6 @@ on:
 
 permissions:
   id-token: write
-  contents: write
 
 jobs:
   publish:
@@ -30,21 +29,11 @@ jobs:
           PUBLISHED=$(npm view pr-visual version 2>/dev/null || echo "0.0.0")
           if [ "$CURRENT" != "$PUBLISHED" ]; then
             echo "publish=true" >> $GITHUB_OUTPUT
-            echo "bump=false" >> $GITHUB_OUTPUT
-            echo "Version $CURRENT not published yet"
+            echo "Version $CURRENT is new, will publish"
           else
-            echo "publish=true" >> $GITHUB_OUTPUT
-            echo "bump=true" >> $GITHUB_OUTPUT
-            echo "Version $CURRENT already published, will bump"
+            echo "publish=false" >> $GITHUB_OUTPUT
+            echo "Version $CURRENT already published, skipping"
           fi
-
-      - name: Bump version
-        if: steps.check.outputs.bump == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          npm version patch -m "Bump version to %s [skip ci]"
-          git push
 
       - name: Publish to npm
         if: steps.check.outputs.publish == 'true'
