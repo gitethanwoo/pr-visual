@@ -20,6 +20,29 @@ async function selectCommit() {
     });
     return commit;
 }
+export async function detectBestDiffMode() {
+    const branches = await git.branch();
+    const currentBranch = branches.current;
+    const defaultBranch = branches.all.includes("main") ? "main" : branches.all.includes("master") ? "master" : null;
+    // If on a feature branch, use branch diff
+    if (defaultBranch && currentBranch !== defaultBranch) {
+        const diff = await git.diff([`${defaultBranch}...${currentBranch}`]);
+        if (diff.trim()) {
+            return { mode: "branch", description: `${currentBranch} vs ${defaultBranch}` };
+        }
+    }
+    // Check for staged changes
+    const staged = await git.diff(["--cached"]);
+    if (staged.trim()) {
+        return { mode: "staged", description: "staged changes" };
+    }
+    // Check for unstaged changes
+    const unstaged = await git.diff();
+    if (unstaged.trim()) {
+        return { mode: "unstaged", description: "unstaged changes" };
+    }
+    return null;
+}
 export async function getDiff(mode, commitHashArg) {
     switch (mode) {
         case "branch": {

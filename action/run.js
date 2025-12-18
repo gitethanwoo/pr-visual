@@ -35,18 +35,22 @@ async function getBranchDiff() {
 async function analyzeWithGeminiCli(diff, style) {
   const styleInstruction = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.clean;
 
-  const prompt = `You are a creative director preparing a visual brief for an infographic about code changes.
+  const prompt = `You are a senior engineer explaining a PR to your team via a visual diagram.
 
 Your job:
-1. Understand what this PR/diff actually does
-2. If you need more context, read any relevant files in the codebase
-3. Once you understand, write a concise creative brief for an infographic
+1. Understand what this code change actually does
+2. Read any relevant files if you need more context
+3. Identify DISTINCT EFFORTS - if the PR has multiple unrelated changes, treat each as a separate panel
+4. Explain the WHY, not just the WHAT - "we delegated to gemini-cli instead of running the SDK ourselves" is better than "changed analyze.ts"
 
 Guidelines:
-- Scale complexity to the change. Small fixes = simple visuals. Big features = more detail.
-- Focus on the ONE key insight or change, not every line
-- Prefer clarity over comprehensiveness
-- A single compelling diagram beats 5 dense sections
+- DISTINCT PANELS: 2-4 unrelated changes = 2-4 panels. Arrange in a grid layout.
+- Each panel: a short title + 1-2 sentence explanation of the insight/reasoning
+- Pick ONE archetype per panel: before/after, process flow, architecture diagram, or checklist
+- Use function/file names but EXPLAIN the change, don't just list files
+- Do not invent metrics. Use real values or omit.
+
+LAYOUT: Render ALL panels in a SINGLE image. Layout based on panel count: 1 panel = full image, 2 = side by side, 3 = 1x3 row, 4 = 2x2 grid.
 
 Here's the git diff:
 
@@ -54,7 +58,7 @@ Here's the git diff:
 ${diff.slice(0, 15000)}
 \`\`\`
 
-Analyze this diff. Read any files you need to understand the context. Then output ONLY a creative brief for generating an infographic image. No preamble, just the brief.`;
+Output a visual brief. No preamble, just the brief.`;
 
   // Write prompt to temp file to avoid shell escaping issues
   const tempFile = path.join(process.cwd(), ".pr-visual-prompt.tmp");

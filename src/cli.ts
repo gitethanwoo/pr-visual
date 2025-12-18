@@ -3,10 +3,11 @@
 import { select, confirm } from "@inquirer/prompts";
 import chalk from "chalk";
 import open from "open";
-import { getDiff, DiffMode } from "./git.js";
+import { getDiff, DiffMode, detectBestDiffMode } from "./git.js";
 import { analyzeDiff } from "./analyze.js";
 import { generateImage } from "./image.js";
 import { login, logout, showAuthStatus, getAccessToken } from "./auth.js";
+import { printBanner, createSpinner, printSuccess, printStep, printError } from "./ui.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -159,6 +160,90 @@ function isValidStyle(style: string | null): style is VisualStyle {
   return style !== null && ["clean", "excalidraw", "minimal", "tech", "playful"].includes(style);
 }
 
+async function runQuickFlow(): Promise<void> {
+  printBanner();
+
+  // Check for any auth
+  let accessToken = await getAccessToken();
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!accessToken && !apiKey) {
+    printStep("No authentication found. Starting login...");
+    console.log();
+    await login();
+    accessToken = await getAccessToken();
+    if (!accessToken) {
+      printError("Login failed. Please try again.");
+      process.exit(1);
+    }
+    console.log();
+  }
+
+  // Auto-detect what to visualize
+  const detected = await detectBestDiffMode();
+
+  if (!detected) {
+    printError("No changes found to visualize.");
+    printStep("Make some changes, stage them, or switch to a feature branch.");
+    process.exit(0);
+  }
+
+  printStep(`Analyzing ${detected.description}...`);
+  console.log();
+
+  const spinner = createSpinner("Generating creative brief");
+
+  const diff = await getDiff(detected.mode);
+  const style: VisualStyle = "clean";
+
+  const imagePrompt = await analyzeDiff(diff, style);
+  spinner.update("Generating image");
+
+  const imageBuffer = await generateImage(imagePrompt, accessToken ?? undefined);
+  spinner.stop();
+
+  const outputPath = path.join(process.cwd(), `pr-visual-${Date.now()}.png`);
+  fs.writeFileSync(outputPath, imageBuffer);
+
+  printSuccess(outputPath);
+  console.log();
+
+  await open(outputPath);
+
+  // Post-generation prompt
+  console.log(chalk.dim("  ─".repeat(20)));
+  console.log();
+
+  const next = await select({
+    message: "What next?",
+    choices: [
+      { name: "Set up automatic PR visuals for this repo", value: "setup" },
+      { name: "Generate another with different options", value: "another" },
+      { name: "Exit", value: "exit" },
+    ],
+  });
+
+  if (next === "setup") {
+    console.log();
+    printStep("Automatic PR setup coming soon.");
+    printStep("For now, see: https://github.com/gitethanwoo/pr-visual#github-action");
+    console.log();
+  } else if (next === "another") {
+    console.log();
+    await runGenerate({
+      command: null,
+      help: false,
+      mode: null,
+      style: null,
+      prompt: null,
+      promptFile: null,
+      commit: null,
+      yes: false,
+      output: null
+    });
+  }
+}
+
 async function runGenerate(args: CliArgs): Promise<void> {
   // Check authentication
   const accessToken = await getAccessToken();
@@ -255,8 +340,8 @@ async function runGenerate(args: CliArgs): Promise<void> {
 
     console.log(chalk.gray(`Found ${diff.split("\n").length} lines of diff\n`));
 
-    console.log(chalk.gray(`Analyzing diff with Gemini Flash (${style} style)...`));
-    imagePrompt = await analyzeDiff(diff, style, accessToken ?? undefined);
+    console.log(chalk.gray(`Analyzing diff with Gemini CLI (${style} style)...`));
+    imagePrompt = await analyzeDiff(diff, style);
   }
 
   console.log(chalk.green("\nGenerated image prompt:"));
@@ -288,6 +373,10 @@ async function runGenerate(args: CliArgs): Promise<void> {
   }
 }
 
+function hasAnyArgs(args: CliArgs): boolean {
+  return !!(args.mode || args.style || args.prompt || args.promptFile || args.commit || args.yes || args.output);
+}
+
 async function main() {
   const args = parseArgs();
 
@@ -307,7 +396,12 @@ async function main() {
       showAuthStatus();
       break;
     default:
-      await runGenerate(args);
+      // If no args at all, use the new quick flow
+      if (!hasAnyArgs(args)) {
+        await runQuickFlow();
+      } else {
+        await runGenerate(args);
+      }
   }
 }
 
