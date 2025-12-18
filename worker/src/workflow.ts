@@ -240,7 +240,7 @@ ${historySection}
 <details>
 <summary>About this image</summary>
 
-Generated automatically by [pr-visual](https://github.com/gitethanwoo/pr-visual).
+Generated automatically by [pr-visual](https://github.com/apps/pr-visual).
 
 </details>`;
 }
