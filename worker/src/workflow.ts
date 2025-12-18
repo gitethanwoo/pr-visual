@@ -11,7 +11,16 @@ interface HistoryImage {
 
 const COMMENT_MARKER = "<!-- pr-visual -->";
 const MAX_DIFF_BYTES = 50_000;
-const SKIP_FILES = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"];
+const SKIP_FILES = [
+	"package-lock.json",
+	"yarn.lock",
+	"pnpm-lock.yaml",
+	"bun.lockb",
+	"composer.lock",
+	"Cargo.lock",
+	"Gemfile.lock",
+	"poetry.lock",
+];
 
 /**
  * Extract all images (current + history) from an existing PR Visual comment.

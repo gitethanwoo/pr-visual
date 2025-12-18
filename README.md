@@ -139,6 +139,7 @@ Commands:
   login     Login with Google OAuth
   logout    Clear stored credentials
   status    Show authentication status
+  upgrade   Upgrade to the hosted version
   (none)    Generate infographic (default)
 
 Options:

@@ -3,6 +3,30 @@ import { promisify } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 const execAsync = promisify(exec);
+const MAX_DIFF_CHARS = 50_000;
+const SKIP_FILES = [
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
+    "composer.lock",
+    "Cargo.lock",
+    "Gemfile.lock",
+    "poetry.lock",
+];
+function filterDiff(diff) {
+    // Split by diff headers and filter out lock files
+    const parts = diff.split(/(?=^diff --git )/m);
+    return parts
+        .filter((part) => {
+        const match = part.match(/^diff --git a\/(.+?) b\//);
+        if (!match)
+            return true; // Keep non-diff parts (like initial context)
+        const filename = match[1];
+        return !SKIP_FILES.some((skip) => filename.endsWith(skip));
+    })
+        .join("");
+}
 const STYLE_INSTRUCTIONS = {
     clean: `Clean, beautiful, modern professional PowerPoint style.`,
     excalidraw: `Excalidraw / hand-drawn style with a nice handwritten feel.`,
@@ -10,7 +34,10 @@ const STYLE_INSTRUCTIONS = {
     tech: `Dark mode with neon accents and terminal aesthetic.`,
     playful: `Playful and colorful with friendly rounded shapes.`,
 };
-export async function analyzeDiff(diff, style) {
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+export async function analyzeDiff(diff, style, retries = 3, onRetry) {
     const styleInstruction = STYLE_INSTRUCTIONS[style];
     const prompt = `You are a senior engineer explaining a PR to your team via a visual diagram.
 
@@ -33,7 +60,12 @@ LAYOUT: Render ALL panels in a SINGLE image. Layout based on panel count: 1 pane
 Here's the git diff:
 
 \`\`\`diff
-${diff.slice(0, 15000)}
+${(() => {
+        const filtered = filterDiff(diff);
+        return filtered.length > MAX_DIFF_CHARS
+            ? filtered.slice(0, MAX_DIFF_CHARS) + "\n\n... (diff truncated) ..."
+            : filtered;
+    })()}
 \`\`\`
 
 Output a visual brief. No preamble, just the brief.
@@ -42,13 +74,27 @@ STYLE: ${styleInstruction}`;
     // Write prompt to temp file to avoid shell escaping issues
     const tempFile = path.join(process.cwd(), ".pr-visual-prompt.tmp");
     fs.writeFileSync(tempFile, prompt);
+    let lastError = null;
     try {
-        // Run gemini CLI via npx in headless mode with auto-approve for file reads
-        const { stdout } = await execAsync(`cat "${tempFile}" | npx -y @google/gemini-cli -y -m gemini-3-flash-preview`, {
-            maxBuffer: 10 * 1024 * 1024,
-            timeout: 120000,
-        });
-        return stdout.trim();
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                // Run gemini CLI via npx in headless mode with auto-approve for file reads
+                const { stdout } = await execAsync(`cat "${tempFile}" | npx -y @google/gemini-cli -y -m gemini-3-flash-preview`, {
+                    maxBuffer: 10 * 1024 * 1024,
+                    timeout: 120000,
+                });
+                return stdout.trim();
+            }
+            catch (err) {
+                lastError = err;
+                if (attempt < retries) {
+                    onRetry?.(attempt, lastError);
+                    // Exponential backoff: 2s, 4s, 8s...
+                    await sleep(Math.pow(2, attempt) * 1000);
+                }
+            }
+        }
+        throw lastError;
     }
     finally {
         if (fs.existsSync(tempFile)) {

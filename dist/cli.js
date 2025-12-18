@@ -36,6 +36,7 @@ ${chalk.bold("COMMANDS:")}
   login                   Login with Google OAuth
   logout                  Clear stored credentials
   status                  Show authentication status
+  upgrade                 Upgrade to the hosted version
   (none)                  Generate infographic (default)
 
 ${chalk.bold("OPTIONS:")}
@@ -104,6 +105,7 @@ function parseArgs() {
             case "login":
             case "logout":
             case "status":
+            case "upgrade":
                 result.command = arg;
                 break;
             case "-h":
@@ -170,7 +172,9 @@ async function runQuickFlow() {
     const spinner = createSpinner("Generating creative brief");
     const diff = await getDiff(detected.mode, detected.commitHash);
     const style = "clean";
-    const imagePrompt = await analyzeDiff(diff, style);
+    const imagePrompt = await analyzeDiff(diff, style, 3, (attempt) => {
+        spinner.update(chalk.yellow(`Analysis failed, retrying (attempt ${attempt}/3)...`));
+    });
     spinner.update("Generating image");
     // Rotate through loading messages
     let msgIndex = 0;
@@ -313,7 +317,10 @@ async function runGenerate(args) {
         }
         console.log(chalk.gray(`Found ${diff.split("\n").length} lines of diff\n`));
         console.log(chalk.gray(`Analyzing diff with Gemini CLI (${style} style)...`));
-        imagePrompt = await analyzeDiff(diff, style);
+        imagePrompt = await analyzeDiff(diff, style, 3, (attempt, error) => {
+            console.log(chalk.yellow(`\nAnalysis failed: ${error.message}`));
+            console.log(chalk.yellow(`Retrying (attempt ${attempt}/3)...`));
+        });
     }
     console.log(chalk.green("\nGenerated image prompt:"));
     console.log(chalk.white(imagePrompt));
@@ -370,6 +377,10 @@ async function main() {
             break;
         case "status":
             showAuthStatus();
+            break;
+        case "upgrade":
+            console.log(chalk.cyan("\nOpening checkout page for hosted version...\n"));
+            await open("https://buy.polar.sh/polar_cl_hSXamqKhpTgXtC51on1dQpoElE3jBY6s1cNSY2Q04tA");
             break;
         default:
             // If no args at all, use the new quick flow
