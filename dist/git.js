@@ -41,7 +41,15 @@ export async function detectBestDiffMode() {
     if (unstaged.trim()) {
         return { mode: "unstaged", description: "unstaged changes" };
     }
-    return null;
+    // Fall back to last commit
+    const log = await git.log({ maxCount: 1 });
+    if (log.latest) {
+        const shortHash = log.latest.hash.slice(0, 7);
+        const message = log.latest.message.slice(0, 50);
+        return { mode: "commit", description: `last commit (${shortHash}: ${message})`, commitHash: log.latest.hash };
+    }
+    // This should rarely happen - repo with no commits
+    return { mode: "staged", description: "empty" };
 }
 export async function getDiff(mode, commitHashArg) {
     switch (mode) {

@@ -182,18 +182,12 @@ async function runQuickFlow(): Promise<void> {
   // Auto-detect what to visualize
   const detected = await detectBestDiffMode();
 
-  if (!detected) {
-    printError("No changes found to visualize.");
-    printStep("Make some changes, stage them, or switch to a feature branch.");
-    process.exit(0);
-  }
-
   printStep(`Analyzing ${detected.description}...`);
   console.log();
 
   const spinner = createSpinner("Generating creative brief");
 
-  const diff = await getDiff(detected.mode);
+  const diff = await getDiff(detected.mode, detected.commitHash);
   const style: VisualStyle = "clean";
 
   const imagePrompt = await analyzeDiff(diff, style);

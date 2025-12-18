@@ -26,7 +26,7 @@ async function selectCommit(): Promise<string> {
   return commit;
 }
 
-export async function detectBestDiffMode(): Promise<{ mode: DiffMode; description: string } | null> {
+export async function detectBestDiffMode(): Promise<{ mode: DiffMode; description: string; commitHash?: string }> {
   const branches = await git.branch();
   const currentBranch = branches.current;
   const defaultBranch = branches.all.includes("main") ? "main" : branches.all.includes("master") ? "master" : null;
@@ -51,7 +51,16 @@ export async function detectBestDiffMode(): Promise<{ mode: DiffMode; descriptio
     return { mode: "unstaged", description: "unstaged changes" };
   }
 
-  return null;
+  // Fall back to last commit
+  const log = await git.log({ maxCount: 1 });
+  if (log.latest) {
+    const shortHash = log.latest.hash.slice(0, 7);
+    const message = log.latest.message.slice(0, 50);
+    return { mode: "commit", description: `last commit (${shortHash}: ${message})`, commitHash: log.latest.hash };
+  }
+
+  // This should rarely happen - repo with no commits
+  return { mode: "staged", description: "empty" };
 }
 
 export async function getDiff(mode: DiffMode, commitHashArg?: string): Promise<string> {
