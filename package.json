@@ -1,6 +1,6 @@
 {
   "name": "pr-visual",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Generate visual infographics for PR diffs using Gemini",
   "type": "module",
   "bin": {
