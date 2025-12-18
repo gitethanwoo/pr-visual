@@ -51,6 +51,11 @@ export async function detectBestDiffMode() {
     // This should rarely happen - repo with no commits
     return { mode: "staged", description: "empty" };
 }
+// Files to exclude from diffs (noise that doesn't help understanding)
+const EXCLUDED_FILES = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"];
+function excludeArgs() {
+    return EXCLUDED_FILES.flatMap((f) => ["--", `:!${f}`]);
+}
 export async function getDiff(mode, commitHashArg) {
     switch (mode) {
         case "branch": {
@@ -59,17 +64,17 @@ export async function getDiff(mode, commitHashArg) {
             if (currentBranch === defaultBranch) {
                 throw new Error(`Already on ${defaultBranch}. Switch to a feature branch first.`);
             }
-            return (await git.diff([`${defaultBranch}...${currentBranch}`])) ?? "";
+            return (await git.diff([`${defaultBranch}...${currentBranch}`, ...excludeArgs()])) ?? "";
         }
         case "commit": {
             const commitHash = commitHashArg ?? (await selectCommit());
-            return (await git.diff([`${commitHash}^`, commitHash])) ?? "";
+            return (await git.diff([`${commitHash}^`, commitHash, ...excludeArgs()])) ?? "";
         }
         case "staged": {
-            return (await git.diff(["--cached"])) ?? "";
+            return (await git.diff(["--cached", ...excludeArgs()])) ?? "";
         }
         case "unstaged": {
-            return (await git.diff()) ?? "";
+            return (await git.diff([...excludeArgs()])) ?? "";
         }
     }
 }

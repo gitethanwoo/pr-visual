@@ -1,7 +1,10 @@
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { VisualStyle } from "./cli.js";
+
+const execAsync = promisify(exec);
 
 const STYLE_INSTRUCTIONS: Record<VisualStyle, string> = {
   clean: `Clean, beautiful, modern professional PowerPoint style.`,
@@ -48,17 +51,15 @@ STYLE: ${styleInstruction}`;
 
   try {
     // Run gemini CLI via npx in headless mode with auto-approve for file reads
-    const output = execSync(
+    const { stdout } = await execAsync(
       `cat "${tempFile}" | npx -y @google/gemini-cli -y -m gemini-3-flash-preview`,
       {
-        encoding: "utf-8",
         maxBuffer: 10 * 1024 * 1024,
         timeout: 120000,
-        stdio: ["pipe", "pipe", "pipe"],
       }
     );
 
-    return output.trim();
+    return stdout.trim();
   } finally {
     if (fs.existsSync(tempFile)) {
       fs.unlinkSync(tempFile);

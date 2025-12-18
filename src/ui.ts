@@ -1,7 +1,10 @@
 import chalk from "chalk";
+import gradient from "gradient-string";
 
-const SPINNER_FRAMES = ["   ", ".  ", ".. ", "..."];
-const BAR_WIDTH = 40;
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+// GitHub-inspired: warm orange to cool gray
+const prVisualGradient = gradient(["#f78166", "#ffa657", "#8b949e"]);
 
 export interface Spinner {
   stop: () => void;
@@ -16,11 +19,11 @@ export function createSpinner(text: string): Spinner {
   const render = () => {
     if (stopped) return;
     const frame = SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length];
-    process.stdout.write(`\r  ${currentText}${chalk.dim(frame)}`);
+    process.stdout.write(`\r\x1b[K  ${chalk.cyan(frame)} ${currentText}`);
     frameIndex++;
   };
 
-  const interval = setInterval(render, 300);
+  const interval = setInterval(render, 80);
   render();
 
   return {
@@ -37,25 +40,12 @@ export function createSpinner(text: string): Spinner {
 
 export function printBanner(): void {
   console.log();
-  console.log(chalk.bold("  pr-visual"));
+  console.log(prVisualGradient.multiline("  ██████╗ ██████╗       ██╗   ██╗██╗███████╗██╗   ██╗ █████╗ ██╗     \n  ██╔══██╗██╔══██╗      ██║   ██║██║██╔════╝██║   ██║██╔══██╗██║     \n  ██████╔╝██████╔╝█████╗██║   ██║██║███████╗██║   ██║███████║██║     \n  ██╔═══╝ ██╔══██╗╚════╝╚██╗ ██╔╝██║╚════██║██║   ██║██╔══██║██║     \n  ██║     ██║  ██║       ╚████╔╝ ██║███████║╚██████╔╝██║  ██║███████╗\n  ╚═╝     ╚═╝  ╚═╝        ╚═══╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝"));
   console.log();
 }
 
-export function printBox(lines: string[]): void {
-  const maxLen = Math.max(...lines.map((l) => l.length));
-  const top = "  +" + "-".repeat(maxLen + 2) + "+";
-  const bottom = top;
-
-  console.log(chalk.dim(top));
-  for (const line of lines) {
-    const padded = line.padEnd(maxLen);
-    console.log(chalk.dim("  | ") + padded + chalk.dim(" |"));
-  }
-  console.log(chalk.dim(bottom));
-}
-
 export function printSuccess(text: string): void {
-  console.log(chalk.green("  done.") + " " + text);
+  console.log(chalk.green("  ✓") + " " + text);
 }
 
 export function printStep(text: string): void {
@@ -63,7 +53,7 @@ export function printStep(text: string): void {
 }
 
 export function printError(text: string): void {
-  console.log(chalk.red("  error: ") + text);
+  console.log(chalk.red("  ✗ ") + text);
 }
 
 export function clearLine(): void {

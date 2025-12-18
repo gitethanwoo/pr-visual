@@ -1,6 +1,8 @@
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
+const execAsync = promisify(exec);
 const STYLE_INSTRUCTIONS = {
     clean: `Clean, beautiful, modern professional PowerPoint style.`,
     excalidraw: `Excalidraw / hand-drawn style with a nice handwritten feel.`,
@@ -42,13 +44,11 @@ STYLE: ${styleInstruction}`;
     fs.writeFileSync(tempFile, prompt);
     try {
         // Run gemini CLI via npx in headless mode with auto-approve for file reads
-        const output = execSync(`cat "${tempFile}" | npx -y @google/gemini-cli -y -m gemini-3-flash-preview`, {
-            encoding: "utf-8",
+        const { stdout } = await execAsync(`cat "${tempFile}" | npx -y @google/gemini-cli -y -m gemini-3-flash-preview`, {
             maxBuffer: 10 * 1024 * 1024,
             timeout: 120000,
-            stdio: ["pipe", "pipe", "pipe"],
         });
-        return output.trim();
+        return stdout.trim();
     }
     finally {
         if (fs.existsSync(tempFile)) {

@@ -81,14 +81,29 @@ async function generateWithApiKey(prompt: string): Promise<Buffer> {
   throw new Error("No image data in response");
 }
 
-export async function generateImage(prompt: string, accessToken?: string): Promise<Buffer> {
-  if (accessToken) {
-    return generateWithOAuth(prompt, accessToken);
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function generateImage(prompt: string, accessToken?: string, retries = 3): Promise<Buffer> {
+  const generate = accessToken ? () => generateWithOAuth(prompt, accessToken) :
+    process.env.GEMINI_API_KEY ? () => generateWithApiKey(prompt) : null;
+
+  if (!generate) {
+    throw new Error("No authentication available");
   }
 
-  if (process.env.GEMINI_API_KEY) {
-    return generateWithApiKey(prompt);
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await generate();
+    } catch (err) {
+      lastError = err as Error;
+      if (attempt < retries) {
+        await sleep(1000 * attempt); // backoff: 1s, 2s, 3s
+      }
+    }
   }
 
-  throw new Error("No authentication available");
+  throw lastError;
 }
