@@ -3,6 +3,18 @@ import { GoogleGenAI } from "@google/genai";
 const IMAGE_MODEL = "gemini-3-pro-image-preview";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
+// Known finish reasons that indicate why image generation failed
+const FINISH_REASON_MESSAGES: Record<string, string> = {
+  IMAGE_SAFETY: "Image blocked due to safety filters",
+  IMAGE_PROHIBITED_CONTENT: "Image blocked due to prohibited content",
+  SAFETY: "Response blocked due to safety filters",
+  RECITATION: "Response blocked due to recitation concerns",
+  BLOCKLIST: "Response blocked due to blocklist",
+  PROHIBITED_CONTENT: "Response blocked due to prohibited content",
+  SPII: "Response blocked due to sensitive personal information",
+  MALFORMED_FUNCTION_CALL: "Malformed function call in response",
+};
+
 interface GeminiImageResponse {
   candidates?: Array<{
     content?: {
@@ -14,10 +26,54 @@ interface GeminiImageResponse {
         };
       }>;
     };
+    finishReason?: string;
   }>;
   error?: {
     message: string;
+    code?: number;
+    status?: string;
   };
+  promptFeedback?: {
+    blockReason?: string;
+    safetyRatings?: Array<{
+      category: string;
+      probability: string;
+    }>;
+  };
+}
+
+function buildNoImageError(
+  finishReason?: string,
+  textResponse?: string,
+  blockReason?: string
+): Error {
+  const parts: string[] = [];
+
+  // Check for known finish reasons
+  if (finishReason && FINISH_REASON_MESSAGES[finishReason]) {
+    parts.push(FINISH_REASON_MESSAGES[finishReason]);
+  } else if (finishReason && finishReason !== "STOP") {
+    parts.push(`Finish reason: ${finishReason}`);
+  }
+
+  // Check for prompt block reason
+  if (blockReason) {
+    parts.push(`Prompt blocked: ${blockReason}`);
+  }
+
+  // Include text response if model explained why
+  if (textResponse) {
+    const truncated = textResponse.length > 200
+      ? textResponse.slice(0, 200) + "..."
+      : textResponse;
+    parts.push(`Model response: "${truncated}"`);
+  }
+
+  if (parts.length === 0) {
+    parts.push("Model returned no image (reason unknown)");
+  }
+
+  return new Error(parts.join(". "));
 }
 
 async function generateWithOAuth(prompt: string, accessToken: string): Promise<Buffer> {
@@ -37,22 +93,34 @@ async function generateWithOAuth(prompt: string, accessToken: string): Promise<B
 
   const data: GeminiImageResponse = await response.json();
 
+  // Check for API error
   if (data.error) {
-    throw new Error(data.error.message);
+    throw new Error(`API error: ${data.error.message}`);
   }
 
-  const parts = data.candidates?.[0]?.content?.parts;
-  if (!parts) {
-    throw new Error("No response from Gemini image model");
+  // Check for prompt-level blocking
+  if (data.promptFeedback?.blockReason) {
+    throw new Error(`Prompt blocked: ${data.promptFeedback.blockReason}`);
   }
 
+  const candidate = data.candidates?.[0];
+  if (!candidate?.content?.parts) {
+    throw buildNoImageError(candidate?.finishReason, undefined, data.promptFeedback?.blockReason);
+  }
+
+  const parts = candidate.content.parts;
+  const finishReason = candidate.finishReason;
+
+  // Look for image data
   for (const part of parts) {
     if (part.inlineData?.data) {
       return Buffer.from(part.inlineData.data, "base64");
     }
   }
 
-  throw new Error("No image data in response");
+  // No image found - extract any text response for diagnostics
+  const textParts = parts.filter(p => p.text).map(p => p.text).join(" ");
+  throw buildNoImageError(finishReason, textParts || undefined);
 }
 
 async function generateWithApiKey(prompt: string): Promise<Buffer> {
@@ -68,21 +136,39 @@ async function generateWithApiKey(prompt: string): Promise<Buffer> {
   });
 
   const candidate = response.candidates?.[0];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const finishReason = (candidate as any)?.finishReason as string | undefined;
+
   if (!candidate?.content?.parts) {
-    throw new Error("No response from Gemini image model");
+    throw buildNoImageError(finishReason);
   }
 
+  // Look for image data
   for (const part of candidate.content.parts) {
     if (part.inlineData?.data) {
       return Buffer.from(part.inlineData.data, "base64");
     }
   }
 
-  throw new Error("No image data in response");
+  // No image found - extract any text response for diagnostics
+  const textParts = candidate.content.parts
+    .filter(p => p.text)
+    .map(p => p.text)
+    .join(" ");
+  throw buildNoImageError(finishReason, textParts || undefined);
 }
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Wrap prompt to explicitly request image generation
+function wrapPromptForImage(prompt: string): string {
+  return `Generate an image based on the following description. You MUST output an image.
+
+${prompt}
+
+Remember: Output an image, not just text.`;
 }
 
 export async function generateImage(
@@ -91,10 +177,11 @@ export async function generateImage(
   retries = 3,
   onRetry?: (attempt: number, error: Error) => void
 ): Promise<Buffer> {
+  const imagePrompt = wrapPromptForImage(prompt);
   const generate = accessToken
-    ? () => generateWithOAuth(prompt, accessToken)
+    ? () => generateWithOAuth(imagePrompt, accessToken)
     : process.env.GEMINI_API_KEY
-    ? () => generateWithApiKey(prompt)
+    ? () => generateWithApiKey(imagePrompt)
     : null;
 
   if (!generate) {
