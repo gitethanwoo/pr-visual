@@ -15,6 +15,24 @@ export function createSpinner(text: string): Spinner {
   let frameIndex = 0;
   let currentText = text;
   let stopped = false;
+  const isTTY = process.stdout.isTTY;
+
+  // In non-TTY mode (CI, AI agents, pipes), print once and don't animate
+  if (!isTTY) {
+    console.log(`  ... ${text}`);
+    return {
+      stop: () => {
+        stopped = true;
+      },
+      update: (newText: string) => {
+        // Only print if the message meaningfully changed (not just animation)
+        if (newText !== currentText) {
+          currentText = newText;
+          console.log(`  ... ${newText}`);
+        }
+      },
+    };
+  }
 
   const render = () => {
     if (stopped) return;
