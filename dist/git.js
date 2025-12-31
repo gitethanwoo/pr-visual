@@ -54,7 +54,8 @@ export async function detectBestDiffMode() {
 // Files to exclude from diffs (noise that doesn't help understanding)
 const EXCLUDED_FILES = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"];
 function excludeArgs() {
-    return EXCLUDED_FILES.flatMap((f) => ["--", `:!${f}`]);
+    // Git requires at least one positive pathspec when using exclusions.
+    return ["--", ".", ...EXCLUDED_FILES.map((f) => `:!${f}`)];
 }
 export async function getDiff(mode, commitHashArg) {
     switch (mode) {

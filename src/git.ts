@@ -67,7 +67,8 @@ export async function detectBestDiffMode(): Promise<{ mode: DiffMode; descriptio
 const EXCLUDED_FILES = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"];
 
 function excludeArgs(): string[] {
-  return EXCLUDED_FILES.flatMap((f) => ["--", `:!${f}`]);
+  // Git requires at least one positive pathspec when using exclusions.
+  return ["--", ".", ...EXCLUDED_FILES.map((f) => `:!${f}`)];
 }
 
 export async function getDiff(mode: DiffMode, commitHashArg?: string): Promise<string> {
