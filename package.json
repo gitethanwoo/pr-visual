@@ -1,6 +1,6 @@
 {
   "name": "pr-visual",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "Generate visual infographics for PR diffs using Gemini",
   "type": "module",
   "bin": {
@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli.js",
-    "dev": "tsc && node dist/cli.js"
+    "dev": "tsc && node dist/cli.js",
+    "test": "vitest run"
   },
   "keywords": [
     "pr",
@@ -34,6 +35,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.0.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   }
 }
